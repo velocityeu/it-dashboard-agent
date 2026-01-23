@@ -2,10 +2,11 @@ import os from 'os'
 import { loadConfig } from './config.js'
 import { createLogger } from './utils/logger.js'
 import { DashboardClient, type NetworkSegment, type DeviceToMonitor, type StatusReport } from './api/client.js'
-import { arpScan, populateArpCache } from './scanner/arp.js'
+import { arpScan, populateArpCache, type DiscoveredDevice } from './scanner/arp.js'
 import { pingHost } from './scanner/ping.js'
 import { checkTcpPort } from './scanner/tcp.js'
 import { checkHttp } from './scanner/http.js'
+import { AgentUI } from './ui/server.js'
 
 const VERSION = '1.0.0'
 
@@ -34,8 +35,14 @@ async function main() {
   // Create dashboard client
   const client = new DashboardClient(config.dashboardUrl, config.apiKey, logger)
 
+  // Create Agent UI server
+  const ui = new AgentUI(logger, config.agentName, config.dashboardUrl)
+
   // Track segment scan states
   const segmentStates = new Map<string, SegmentState>()
+
+  // Track all discovered devices for UI
+  const allDiscoveredDevices: DiscoveredDevice[] = []
 
   // Heartbeat function
   async function sendHeartbeat(): Promise<NetworkSegment[]> {
@@ -44,6 +51,11 @@ async function main() {
       const response = await client.heartbeat(VERSION, hostname)
 
       logger.info(`Heartbeat successful: ${response.segments.length} segments assigned`)
+
+      // Update UI
+      ui.updateConnectionStatus(true)
+      ui.updateHeartbeat()
+      ui.addLog('info', `Heartbeat: ${response.segments.length} segments`)
 
       // Update segment states
       for (const segment of response.segments) {
@@ -54,11 +66,25 @@ async function main() {
             scanning: false,
           })
           logger.info(`New segment: ${segment.name} (${segment.cidr})`)
+          ui.addLog('info', `New segment: ${segment.name}`)
         } else {
           // Update segment config
           const state = segmentStates.get(segment.id)!
           state.segment = segment
         }
+      }
+
+      // Update UI with segments
+      ui.updateSegments(response.segments)
+
+      // Set up scan callbacks for UI
+      for (const segment of response.segments) {
+        ui.setScanCallback(segment.id, async () => {
+          const state = segmentStates.get(segment.id)
+          if (state) {
+            await scanSegment(state)
+          }
+        })
       }
 
       // Remove segments no longer assigned
@@ -72,6 +98,8 @@ async function main() {
       return response.segments
     } catch (error) {
       logger.error(`Heartbeat failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      ui.updateConnectionStatus(false)
+      ui.addLog('error', `Heartbeat failed: ${error instanceof Error ? error.message : 'Unknown'}`)
       return []
     }
   }
@@ -88,29 +116,43 @@ async function main() {
 
     try {
       logger.info(`Scanning segment: ${segment.name} (${segment.cidr})`)
+      ui.updateScanProgress(segment.id, 10, true)
+      ui.addLog('info', `Scanning: ${segment.name}`)
 
       // Populate ARP cache first
       await populateArpCache(segment.cidr, logger)
+      ui.updateScanProgress(segment.id, 40, true)
 
       // Small delay for ARP cache to populate
       await new Promise(resolve => setTimeout(resolve, 2000))
+      ui.updateScanProgress(segment.id, 60, true)
 
       // Scan ARP table
       const devices = await arpScan(segment.cidr, logger)
+      ui.updateScanProgress(segment.id, 80, true)
 
       if (devices.length > 0) {
         logger.info(`Discovered ${devices.length} devices in ${segment.name}`)
+        ui.addLog('info', `Found ${devices.length} devices in ${segment.name}`)
+
+        // Update UI with discovered devices
+        ui.updateDevices(devices)
 
         // Upload to dashboard
         const result = await client.uploadDiscoveredDevices(segment.id, devices)
         logger.info(`Upload result: ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged`)
+        ui.addLog('info', `Uploaded: ${result.created} new, ${result.updated} updated`)
       } else {
         logger.info(`No devices found in ${segment.name}`)
+        ui.addLog('warn', `No devices in ${segment.name}`)
       }
 
       state.lastScan = Date.now()
+      ui.updateScanProgress(segment.id, 100, false)
     } catch (error) {
       logger.error(`Segment scan failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      ui.addLog('error', `Scan failed: ${error instanceof Error ? error.message : 'Unknown'}`)
+      ui.updateScanProgress(segment.id, 0, false)
     } finally {
       state.scanning = false
     }
@@ -225,6 +267,9 @@ async function main() {
 
   // Main loop
   async function runLoop(): Promise<void> {
+    // Start Agent UI server
+    await ui.start(3001)
+
     // Initial heartbeat
     await sendHeartbeat()
 
