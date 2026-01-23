@@ -1,8 +1,12 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import oui from 'oui'
+import { createRequire } from 'module'
 import { isInCidr, normalizeMac } from '../utils/ip-utils.js'
 import type { Logger } from '../utils/logger.js'
+
+// Load OUI database (IEEE MAC address vendor database)
+const require = createRequire(import.meta.url)
+const ouiData: Record<string, string> = require('oui-data')
 
 const execAsync = promisify(exec)
 
@@ -24,13 +28,10 @@ export interface DiscoveredDevice {
  */
 export function getManufacturer(mac: string): string | undefined {
   try {
-    const result = oui(mac)
-    if (result) {
-      // OUI returns multi-line string, take first line (company name)
-      const lines = result.split('\n')
-      return lines[0]?.trim() || undefined
-    }
-    return undefined
+    // Extract OUI prefix (first 6 hex chars) from MAC address
+    const prefix = mac.replace(/[^0-9a-f]/gi, '').toUpperCase().substring(0, 6)
+    const result = ouiData[prefix]
+    return result || undefined
   } catch {
     return undefined
   }

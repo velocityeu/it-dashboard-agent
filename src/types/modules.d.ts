@@ -1,8 +1,3 @@
-declare module 'oui' {
-  function oui(mac: string): string | null
-  export = oui
-}
-
 declare module 'net-snmp' {
   export const Version1: number
   export const Version2c: number
