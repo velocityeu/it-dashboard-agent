@@ -16,6 +16,12 @@ interface SegmentState {
   scanning: boolean
 }
 
+// Track consecutive failures for status hysteresis
+// Device only goes offline after FAILURE_THRESHOLD consecutive failures
+const FAILURE_THRESHOLD = 2
+const deviceFailureCounts = new Map<string, number>()
+const lastKnownStatus = new Map<string, 'online' | 'offline' | 'degraded' | 'unknown'>()
+
 async function main() {
   console.log(`
 ╔════════════════════════════════════════════╗
@@ -253,15 +259,51 @@ async function main() {
 
       await Promise.all(workers)
 
-      // Upload status reports
-      if (reports.length > 0) {
-        const result = await client.uploadStatusReports(reports)
-        const online = reports.filter(r => r.status === 'online').length
-        const offline = reports.filter(r => r.status === 'offline').length
+      // Apply status hysteresis to prevent rapid flapping
+      // Device only goes offline after FAILURE_THRESHOLD consecutive failures
+      const stabilizedReports = reports.map(report => {
+        const deviceKey = report.device_id
+        const rawStatus = report.status
+
+        if (rawStatus === 'online') {
+          // Device is responding - reset failure count
+          deviceFailureCounts.set(deviceKey, 0)
+          lastKnownStatus.set(deviceKey, 'online')
+          return report
+        } else if (rawStatus === 'offline' || rawStatus === 'degraded') {
+          // Device failed check - increment failure count
+          const currentFailures = (deviceFailureCounts.get(deviceKey) || 0) + 1
+          deviceFailureCounts.set(deviceKey, currentFailures)
+
+          const previousStatus = lastKnownStatus.get(deviceKey)
+
+          if (currentFailures < FAILURE_THRESHOLD && previousStatus === 'online') {
+            // Not enough consecutive failures - keep as online
+            logger.debug(`Device ${report.ip_address}: ${rawStatus} (failure ${currentFailures}/${FAILURE_THRESHOLD}, keeping online)`)
+            return { ...report, status: 'online' as const }
+          } else {
+            // Enough failures - accept offline status
+            if (previousStatus !== rawStatus) {
+              logger.info(`Device ${report.ip_address}: status changed ${previousStatus || 'unknown'} → ${rawStatus} (after ${currentFailures} failures)`)
+            }
+            lastKnownStatus.set(deviceKey, rawStatus)
+            return report
+          }
+        }
+
+        // For 'unknown' status, just pass through
+        return report
+      })
+
+      // Upload stabilized status reports
+      if (stabilizedReports.length > 0) {
+        const result = await client.uploadStatusReports(stabilizedReports)
+        const online = stabilizedReports.filter(r => r.status === 'online').length
+        const offline = stabilizedReports.filter(r => r.status === 'offline').length
         logger.info(`Status check complete: ${online} online, ${offline} offline, ${result.processed} processed`)
 
         // Update Agent UI with status
-        const statusUpdates = reports.map(r => ({
+        const statusUpdates = stabilizedReports.map(r => ({
           ip_address: r.ip_address,
           status: r.status as 'online' | 'offline' | 'degraded' | 'unknown',
           response_time_ms: r.response_time_ms,
