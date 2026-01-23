@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IT Dashboard Agent</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 0;
+      border-bottom: 1px solid #334155;
+      margin-bottom: 20px;
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .status-badge.connected { background: #166534; color: #86efac; }
+    .status-badge.disconnected { background: #991b1b; color: #fca5a5; }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    .connected .status-dot { background: #22c55e; }
+    .disconnected .status-dot { background: #ef4444; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 1024px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid #334155;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .card-title { font-size: 1rem; font-weight: 600; color: #94a3b8; }
+    .card-value { font-size: 2rem; font-weight: 700; color: #f8fafc; }
+    .segment-card {
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid #334155;
+    }
+    .segment-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .segment-name { font-weight: 600; color: #f8fafc; }
+    .segment-cidr { font-size: 0.875rem; color: #64748b; font-family: monospace; }
+    .progress-bar {
+      height: 4px;
+      background: #334155;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: #3b82f6;
+      color: white;
+    }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { background: #475569; cursor: not-allowed; }
+    .devices-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+    }
+    .devices-table th, .devices-table td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid #334155;
+    }
+    .devices-table th {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+    }
+    .devices-table td { font-size: 0.875rem; }
+    .devices-table tr:hover { background: #334155; }
+    .device-ip { font-family: monospace; color: #60a5fa; }
+    .device-mac { font-family: monospace; font-size: 0.75rem; color: #94a3b8; }
+    .device-manufacturer { color: #a78bfa; }
+    .device-type {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .device-type.server { background: #7c3aed20; color: #a78bfa; }
+    .device-type.workstation { background: #3b82f620; color: #60a5fa; }
+    .device-type.network { background: #06b6d420; color: #22d3ee; }
+    .device-type.printer { background: #f59e0b20; color: #fbbf24; }
+    .device-type.iot { background: #10b98120; color: #34d399; }
+    .device-type.unknown { background: #64748b20; color: #94a3b8; }
+    .logs-container {
+      height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.75rem;
+      background: #0f172a;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid #1e293b; }
+    .log-time { color: #64748b; }
+    .log-level { font-weight: 600; margin: 0 8px; }
+    .log-level.info { color: #3b82f6; }
+    .log-level.warn { color: #f59e0b; }
+    .log-level.error { color: #ef4444; }
+    .log-level.debug { color: #64748b; }
+    .log-message { color: #e2e8f0; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 768px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    .stat-card {
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-label { font-size: 0.75rem; color: #64748b; margin-bottom: 4px; }
+    .stat-value { font-size: 1.5rem; font-weight: 700; }
+    .full-width { grid-column: 1 / -1; }
+    .scrollable { max-height: 400px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>IT Dashboard Agent</h1>
+      <div id="connection-status" class="status-badge disconnected">
+        <span class="status-dot"></span>
+        <span>Disconnected</span>
+      </div>
+    </header>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Agent Name</div>
+        <div class="stat-value" id="agent-name">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Last Heartbeat</div>
+        <div class="stat-value" id="last-heartbeat">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Segments</div>
+        <div class="stat-value" id="segment-count">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Devices</div>
+        <div class="stat-value" id="device-count">0</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Network Segments</span>
+        </div>
+        <div id="segments-list">
+          <p style="color: #64748b;">No segments assigned</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Activity Log</span>
+        </div>
+        <div id="logs-container" class="logs-container"></div>
+      </div>
+
+      <div class="card full-width">
+        <div class="card-header">
+          <span class="card-title">Discovered Devices</span>
+          <span id="devices-count-badge" style="color: #64748b;"></span>
+        </div>
+        <div class="scrollable">
+          <table class="devices-table">
+            <thead>
+              <tr>
+                <th>IP Address</th>
+                <th>MAC</th>
+                <th>Hostname</th>
+                <th>Manufacturer</th>
+                <th>Type</th>
+                <th>Ports</th>
+              </tr>
+            </thead>
+            <tbody id="devices-table-body">
+              <tr><td colspan="6" style="color: #64748b; text-align: center;">No devices discovered yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io()
+
+    // UI Elements
+    const connectionStatus = document.getElementById('connection-status')
+    const agentName = document.getElementById('agent-name')
+    const lastHeartbeat = document.getElementById('last-heartbeat')
+    const segmentCount = document.getElementById('segment-count')
+    const deviceCount = document.getElementById('device-count')
+    const segmentsList = document.getElementById('segments-list')
+    const logsContainer = document.getElementById('logs-container')
+    const devicesTableBody = document.getElementById('devices-table-body')
+    const devicesCountBadge = document.getElementById('devices-count-badge')
+
+    // State
+    let state = {
+      segments: [],
+      devices: [],
+      logs: []
+    }
+
+    // Socket events
+    socket.on('connect', () => {
+      console.log('Connected to agent')
+    })
+
+    socket.on('state', (data) => {
+      state = data
+      updateUI()
+    })
+
+    socket.on('connectionStatus', (isConnected) => {
+      updateConnectionStatus(isConnected)
+    })
+
+    socket.on('heartbeat', (time) => {
+      lastHeartbeat.textContent = formatTime(new Date(time))
+    })
+
+    socket.on('segments', (segments) => {
+      state.segments = segments
+      renderSegments()
+    })
+
+    socket.on('scanProgress', ({ segmentId, progress, isScanning }) => {
+      const segment = state.segments.find(s => s.id === segmentId)
+      if (segment) {
+        segment.progress = progress
+        segment.isScanning = isScanning
+        renderSegments()
+      }
+    })
+
+    socket.on('devices', (devices) => {
+      state.devices = devices
+      renderDevices()
+    })
+
+    socket.on('log', (entry) => {
+      state.logs.push(entry)
+      if (state.logs.length > 100) state.logs = state.logs.slice(-100)
+      renderLogs()
+    })
+
+    // UI Updates
+    function updateUI() {
+      agentName.textContent = state.agentName || '-'
+      if (state.lastHeartbeat) {
+        lastHeartbeat.textContent = formatTime(new Date(state.lastHeartbeat))
+      }
+      updateConnectionStatus(state.isConnected)
+      segmentCount.textContent = state.segments?.length || 0
+      deviceCount.textContent = state.devices?.length || 0
+      renderSegments()
+      renderDevices()
+      renderLogs()
+    }
+
+    function updateConnectionStatus(isConnected) {
+      connectionStatus.className = `status-badge ${isConnected ? 'connected' : 'disconnected'}`
+      connectionStatus.querySelector('span:last-child').textContent = isConnected ? 'Connected' : 'Disconnected'
+    }
+
+    function renderSegments() {
+      if (!state.segments || state.segments.length === 0) {
+        segmentsList.innerHTML = '<p style="color: #64748b;">No segments assigned</p>'
+        return
+      }
+
+      segmentsList.innerHTML = state.segments.map(s => `
+        <div class="segment-card">
+          <div class="segment-header">
+            <div>
+              <div class="segment-name">${escapeHtml(s.name)}</div>
+              <div class="segment-cidr">${escapeHtml(s.cidr)}</div>
+            </div>
+            <button class="btn btn-primary" onclick="triggerScan('${s.id}')" ${s.isScanning ? 'disabled' : ''}>
+              ${s.isScanning ? 'Scanning...' : 'Scan Now'}
+            </button>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #64748b; margin-top: 8px;">
+            <span>${s.deviceCount} devices</span>
+            <span>Last scan: ${s.lastScanAt ? formatTime(new Date(s.lastScanAt)) : 'Never'}</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: ${s.isScanning ? s.progress : 0}%"></div>
+          </div>
+        </div>
+      `).join('')
+    }
+
+    function renderDevices() {
+      if (!state.devices || state.devices.length === 0) {
+        devicesTableBody.innerHTML = '<tr><td colspan="6" style="color: #64748b; text-align: center;">No devices discovered yet</td></tr>'
+        devicesCountBadge.textContent = ''
+        return
+      }
+
+      devicesCountBadge.textContent = `${state.devices.length} devices`
+
+      devicesTableBody.innerHTML = state.devices.map(d => `
+        <tr>
+          <td class="device-ip">${escapeHtml(d.ip_address)}</td>
+          <td class="device-mac">${escapeHtml(d.mac_address || '-')}</td>
+          <td>${escapeHtml(d.hostname || d.netbios_name || '-')}</td>
+          <td class="device-manufacturer">${escapeHtml(d.manufacturer || '-')}</td>
+          <td><span class="device-type ${d.device_type || 'unknown'}">${d.device_type || 'unknown'}</span></td>
+          <td>${d.open_ports?.length ? d.open_ports.slice(0, 5).join(', ') + (d.open_ports.length > 5 ? '...' : '') : '-'}</td>
+        </tr>
+      `).join('')
+    }
+
+    function renderLogs() {
+      if (!state.logs || state.logs.length === 0) {
+        logsContainer.innerHTML = '<div style="color: #64748b;">No logs yet</div>'
+        return
+      }
+
+      logsContainer.innerHTML = state.logs.slice().reverse().map(log => `
+        <div class="log-entry">
+          <span class="log-time">${formatTime(new Date(log.timestamp))}</span>
+          <span class="log-level ${log.level}">[${log.level.toUpperCase()}]</span>
+          <span class="log-message">${escapeHtml(log.message)}</span>
+        </div>
+      `).join('')
+    }
+
+    function triggerScan(segmentId) {
+      socket.emit('triggerScan', segmentId)
+    }
+
+    function formatTime(date) {
+      return date.toLocaleTimeString()
+    }
+
+    function escapeHtml(text) {
+      if (!text) return ''
+      const div = document.createElement('div')
+      div.textContent = text
+      return div.innerHTML
+    }
+
+    // Initial fetch
+    fetch('/api/status')
+      .then(r => r.json())
+      .then(data => {
+        agentName.textContent = data.agentName || '-'
+        updateConnectionStatus(data.isConnected)
+      })
+  </script>
+</body>
+</html>

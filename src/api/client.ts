@@ -20,7 +20,24 @@ export interface DiscoveredDevice {
   ip_address: string
   mac_address?: string
   hostname?: string
-  discovery_method: 'arp' | 'ping_sweep'
+  manufacturer?: string
+  os_hints?: string[]
+  device_type?: 'server' | 'workstation' | 'network' | 'printer' | 'iot' | 'unknown'
+  open_ports?: number[]
+  services?: string[]
+  netbios_name?: string
+  snmp_info?: {
+    sysName?: string
+    sysDescr?: string
+    sysContact?: string
+    sysLocation?: string
+  }
+  upnp_info?: {
+    friendlyName?: string
+    deviceType?: string
+    manufacturer?: string
+  }
+  discovery_method: 'arp' | 'mdns' | 'ssdp' | 'snmp'
 }
 
 export interface DiscoveryResponse {

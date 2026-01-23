@@ -1,0 +1,264 @@
+import express from 'express'
+import { createServer } from 'http'
+import { Server as SocketServer } from 'socket.io'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import type { Logger } from '../utils/logger.js'
+import type { DiscoveredDevice } from '../scanner/arp.js'
+import type { NetworkSegment } from '../api/client.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+export interface AgentState {
+  agentName: string
+  dashboardUrl: string
+  isConnected: boolean
+  lastHeartbeat: Date | null
+  segments: Map<string, SegmentState>
+  discoveredDevices: Map<string, DiscoveredDevice>
+  recentLogs: LogEntry[]
+}
+
+export interface SegmentState {
+  segment: NetworkSegment
+  isScanning: boolean
+  lastScanAt: Date | null
+  deviceCount: number
+  progress: number
+}
+
+export interface LogEntry {
+  timestamp: Date
+  level: 'info' | 'warn' | 'error' | 'debug'
+  message: string
+}
+
+export class AgentUI {
+  private app: express.Application
+  private server: ReturnType<typeof createServer>
+  private io: SocketServer
+  private logger: Logger
+  private state: AgentState
+  private scanCallbacks: Map<string, () => Promise<void>> = new Map()
+
+  constructor(logger: Logger, agentName: string, dashboardUrl: string) {
+    this.logger = logger
+    this.app = express()
+    this.server = createServer(this.app)
+    this.io = new SocketServer(this.server, {
+      cors: { origin: '*' },
+    })
+
+    this.state = {
+      agentName,
+      dashboardUrl,
+      isConnected: false,
+      lastHeartbeat: null,
+      segments: new Map(),
+      discoveredDevices: new Map(),
+      recentLogs: [],
+    }
+
+    this.setupRoutes()
+    this.setupSocketIO()
+  }
+
+  private setupRoutes() {
+    // Serve static files
+    this.app.use(express.static(path.join(__dirname, 'public')))
+
+    // API routes
+    this.app.get('/api/status', (req, res) => {
+      res.json({
+        agentName: this.state.agentName,
+        dashboardUrl: this.state.dashboardUrl,
+        isConnected: this.state.isConnected,
+        lastHeartbeat: this.state.lastHeartbeat,
+        segmentCount: this.state.segments.size,
+        deviceCount: this.state.discoveredDevices.size,
+      })
+    })
+
+    this.app.get('/api/segments', (req, res) => {
+      const segments = Array.from(this.state.segments.values()).map((s) => ({
+        id: s.segment.id,
+        name: s.segment.name,
+        cidr: s.segment.cidr,
+        scanInterval: s.segment.scan_interval_seconds,
+        isScanning: s.isScanning,
+        lastScanAt: s.lastScanAt,
+        deviceCount: s.deviceCount,
+        progress: s.progress,
+      }))
+      res.json({ segments })
+    })
+
+    this.app.get('/api/devices', (req, res) => {
+      const devices = Array.from(this.state.discoveredDevices.values())
+      res.json({ devices })
+    })
+
+    this.app.get('/api/logs', (req, res) => {
+      res.json({ logs: this.state.recentLogs.slice(-100) })
+    })
+
+    this.app.post('/api/scan/:segmentId', async (req, res) => {
+      const { segmentId } = req.params
+      const callback = this.scanCallbacks.get(segmentId)
+
+      if (!callback) {
+        res.status(404).json({ error: 'Segment not found' })
+        return
+      }
+
+      try {
+        // Trigger scan in background
+        callback().catch((err) => this.logger.error(`Manual scan failed: ${err}`))
+        res.json({ success: true, message: 'Scan triggered' })
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to trigger scan' })
+      }
+    })
+
+    // Serve index.html for root
+    this.app.get('/', (req, res) => {
+      res.sendFile(path.join(__dirname, 'public', 'index.html'))
+    })
+  }
+
+  private setupSocketIO() {
+    this.io.on('connection', (socket) => {
+      this.logger.debug(`UI client connected: ${socket.id}`)
+
+      // Send current state
+      socket.emit('state', this.getStateSnapshot())
+
+      socket.on('disconnect', () => {
+        this.logger.debug(`UI client disconnected: ${socket.id}`)
+      })
+
+      socket.on('triggerScan', async (segmentId: string) => {
+        const callback = this.scanCallbacks.get(segmentId)
+        if (callback) {
+          callback().catch((err) => this.logger.error(`Manual scan failed: ${err}`))
+        }
+      })
+    })
+  }
+
+  private getStateSnapshot() {
+    return {
+      agentName: this.state.agentName,
+      dashboardUrl: this.state.dashboardUrl,
+      isConnected: this.state.isConnected,
+      lastHeartbeat: this.state.lastHeartbeat,
+      segments: Array.from(this.state.segments.values()).map((s) => ({
+        id: s.segment.id,
+        name: s.segment.name,
+        cidr: s.segment.cidr,
+        scanInterval: s.segment.scan_interval_seconds,
+        isScanning: s.isScanning,
+        lastScanAt: s.lastScanAt,
+        deviceCount: s.deviceCount,
+        progress: s.progress,
+      })),
+      devices: Array.from(this.state.discoveredDevices.values()),
+      logs: this.state.recentLogs.slice(-50),
+    }
+  }
+
+  // Public methods to update state
+  updateConnectionStatus(isConnected: boolean) {
+    this.state.isConnected = isConnected
+    this.io.emit('connectionStatus', isConnected)
+  }
+
+  updateHeartbeat() {
+    this.state.lastHeartbeat = new Date()
+    this.io.emit('heartbeat', this.state.lastHeartbeat)
+  }
+
+  updateSegments(segments: NetworkSegment[]) {
+    for (const segment of segments) {
+      if (!this.state.segments.has(segment.id)) {
+        this.state.segments.set(segment.id, {
+          segment,
+          isScanning: false,
+          lastScanAt: null,
+          deviceCount: 0,
+          progress: 0,
+        })
+      } else {
+        const state = this.state.segments.get(segment.id)!
+        state.segment = segment
+      }
+    }
+
+    // Remove segments no longer assigned
+    for (const [id] of this.state.segments) {
+      if (!segments.find((s) => s.id === id)) {
+        this.state.segments.delete(id)
+      }
+    }
+
+    this.io.emit('segments', this.getStateSnapshot().segments)
+  }
+
+  setScanCallback(segmentId: string, callback: () => Promise<void>) {
+    this.scanCallbacks.set(segmentId, callback)
+  }
+
+  updateScanProgress(segmentId: string, progress: number, isScanning: boolean) {
+    const state = this.state.segments.get(segmentId)
+    if (state) {
+      state.progress = progress
+      state.isScanning = isScanning
+      if (!isScanning && progress === 100) {
+        state.lastScanAt = new Date()
+      }
+      this.io.emit('scanProgress', { segmentId, progress, isScanning })
+    }
+  }
+
+  updateDevices(devices: DiscoveredDevice[]) {
+    for (const device of devices) {
+      this.state.discoveredDevices.set(device.ip_address, device)
+    }
+
+    // Update segment device counts
+    for (const [, state] of this.state.segments) {
+      state.deviceCount = devices.filter(
+        (d) => d.ip_address // Count all devices for now
+      ).length
+    }
+
+    this.io.emit('devices', Array.from(this.state.discoveredDevices.values()))
+  }
+
+  addLog(level: LogEntry['level'], message: string) {
+    const entry: LogEntry = {
+      timestamp: new Date(),
+      level,
+      message,
+    }
+    this.state.recentLogs.push(entry)
+    if (this.state.recentLogs.length > 200) {
+      this.state.recentLogs = this.state.recentLogs.slice(-100)
+    }
+    this.io.emit('log', entry)
+  }
+
+  async start(port = 3001): Promise<void> {
+    return new Promise((resolve) => {
+      this.server.listen(port, () => {
+        this.logger.info(`Agent UI running at http://localhost:${port}`)
+        resolve()
+      })
+    })
+  }
+
+  stop() {
+    this.server.close()
+  }
+}

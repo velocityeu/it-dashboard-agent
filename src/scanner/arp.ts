@@ -1,5 +1,6 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import oui from 'oui'
 import { isInCidr, normalizeMac } from '../utils/ip-utils.js'
 import type { Logger } from '../utils/logger.js'
 
@@ -9,7 +10,30 @@ export interface DiscoveredDevice {
   ip_address: string
   mac_address: string
   hostname?: string
-  discovery_method: 'arp'
+  manufacturer?: string
+  os_hints?: string[]
+  device_type?: 'server' | 'workstation' | 'network' | 'printer' | 'iot' | 'unknown'
+  open_ports?: number[]
+  services?: string[]
+  netbios_name?: string
+  discovery_method: 'arp' | 'mdns' | 'ssdp' | 'snmp'
+}
+
+/**
+ * Get manufacturer name from MAC address using OUI database
+ */
+export function getManufacturer(mac: string): string | undefined {
+  try {
+    const result = oui(mac)
+    if (result) {
+      // OUI returns multi-line string, take first line (company name)
+      const lines = result.split('\n')
+      return lines[0]?.trim() || undefined
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -60,9 +84,13 @@ export async function arpScan(cidr: string, logger: Logger): Promise<DiscoveredD
           continue
         }
 
+        const normalizedMac = normalizeMac(mac)
+        const manufacturer = getManufacturer(normalizedMac)
+
         devices.push({
           ip_address: ip,
-          mac_address: normalizeMac(mac),
+          mac_address: normalizedMac,
+          manufacturer,
           discovery_method: 'arp',
         })
       }
