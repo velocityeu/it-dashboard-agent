@@ -139,6 +139,27 @@
     .device-type.printer { background: #f59e0b20; color: #fbbf24; }
     .device-type.iot { background: #10b98120; color: #34d399; }
     .device-type.unknown { background: #64748b20; color: #94a3b8; }
+    /* Device status indicators */
+    .device-status { display: flex; align-items: center; gap: 6px; }
+    .device-status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .device-status-dot.online { background: #22c55e; }
+    .device-status-dot.offline { background: #ef4444; }
+    .device-status-dot.degraded { background: #f59e0b; }
+    .device-status-dot.unknown { background: #64748b; }
+    .device-status-text { font-size: 0.75rem; text-transform: capitalize; }
+    .device-status-text.online { color: #22c55e; }
+    .device-status-text.offline { color: #ef4444; }
+    .device-status-text.degraded { color: #f59e0b; }
+    .device-status-text.unknown { color: #64748b; }
+    .device-response { font-family: monospace; font-size: 0.75rem; }
+    .device-response.fast { color: #22c55e; }
+    .device-response.medium { color: #f59e0b; }
+    .device-response.slow { color: #ef4444; }
+    .device-lastcheck { font-size: 0.75rem; color: #64748b; }
     .logs-container {
       height: 300px;
       overflow-y: auto;
@@ -230,16 +251,17 @@
           <table class="devices-table">
             <thead>
               <tr>
+                <th>Status</th>
                 <th>IP Address</th>
-                <th>MAC</th>
                 <th>Hostname</th>
                 <th>Manufacturer</th>
                 <th>Type</th>
-                <th>Ports</th>
+                <th>Response</th>
+                <th>Last Check</th>
               </tr>
             </thead>
             <tbody id="devices-table-body">
-              <tr><td colspan="6" style="color: #64748b; text-align: center;">No devices discovered yet</td></tr>
+              <tr><td colspan="7" style="color: #64748b; text-align: center;">No devices discovered yet</td></tr>
             </tbody>
           </table>
         </div>
@@ -265,6 +287,7 @@
     let state = {
       segments: [],
       devices: [],
+      deviceStatuses: [],
       logs: []
     }
 
@@ -302,6 +325,11 @@
 
     socket.on('devices', (devices) => {
       state.devices = devices
+      renderDevices()
+    })
+
+    socket.on('deviceStatuses', (statuses) => {
+      state.deviceStatuses = statuses
       renderDevices()
     })
 
@@ -360,23 +388,47 @@
 
     function renderDevices() {
       if (!state.devices || state.devices.length === 0) {
-        devicesTableBody.innerHTML = '<tr><td colspan="6" style="color: #64748b; text-align: center;">No devices discovered yet</td></tr>'
+        devicesTableBody.innerHTML = '<tr><td colspan="7" style="color: #64748b; text-align: center;">No devices discovered yet</td></tr>'
         devicesCountBadge.textContent = ''
         return
       }
 
-      devicesCountBadge.textContent = `${state.devices.length} devices`
+      // Create a map of statuses by IP
+      const statusMap = {}
+      if (state.deviceStatuses) {
+        state.deviceStatuses.forEach(s => {
+          statusMap[s.ip_address] = s
+        })
+      }
 
-      devicesTableBody.innerHTML = state.devices.map(d => `
-        <tr>
-          <td class="device-ip">${escapeHtml(d.ip_address)}</td>
-          <td class="device-mac">${escapeHtml(d.mac_address || '-')}</td>
-          <td>${escapeHtml(d.hostname || d.netbios_name || '-')}</td>
-          <td class="device-manufacturer">${escapeHtml(d.manufacturer || '-')}</td>
-          <td><span class="device-type ${d.device_type || 'unknown'}">${d.device_type || 'unknown'}</span></td>
-          <td>${d.open_ports?.length ? d.open_ports.slice(0, 5).join(', ') + (d.open_ports.length > 5 ? '...' : '') : '-'}</td>
-        </tr>
-      `).join('')
+      // Count online/offline
+      const online = state.deviceStatuses?.filter(s => s.status === 'online').length || 0
+      const offline = state.deviceStatuses?.filter(s => s.status === 'offline').length || 0
+      devicesCountBadge.textContent = `${state.devices.length} devices (${online} online, ${offline} offline)`
+
+      devicesTableBody.innerHTML = state.devices.map(d => {
+        const status = statusMap[d.ip_address] || { status: 'unknown', response_time_ms: null, last_check: null }
+        const responseClass = status.response_time_ms ? (status.response_time_ms < 100 ? 'fast' : status.response_time_ms < 500 ? 'medium' : 'slow') : ''
+        const responseText = status.response_time_ms ? `${status.response_time_ms}ms` : '-'
+        const lastCheckText = status.last_check ? formatTime(new Date(status.last_check)) : '-'
+
+        return `
+          <tr>
+            <td>
+              <div class="device-status">
+                <span class="device-status-dot ${status.status}"></span>
+                <span class="device-status-text ${status.status}">${status.status}</span>
+              </div>
+            </td>
+            <td class="device-ip">${escapeHtml(d.ip_address)}</td>
+            <td>${escapeHtml(d.hostname || d.netbios_name || '-')}</td>
+            <td class="device-manufacturer">${escapeHtml(d.manufacturer || '-')}</td>
+            <td><span class="device-type ${d.device_type || 'unknown'}">${d.device_type || 'unknown'}</span></td>
+            <td class="device-response ${responseClass}">${responseText}</td>
+            <td class="device-lastcheck">${lastCheckText}</td>
+          </tr>
+        `
+      }).join('')
     }
 
     function renderLogs() {

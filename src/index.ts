@@ -259,9 +259,21 @@ async function main() {
         const online = reports.filter(r => r.status === 'online').length
         const offline = reports.filter(r => r.status === 'offline').length
         logger.info(`Status check complete: ${online} online, ${offline} offline, ${result.processed} processed`)
+
+        // Update Agent UI with status
+        const statusUpdates = reports.map(r => ({
+          ip_address: r.ip_address,
+          status: r.status as 'online' | 'offline' | 'degraded' | 'unknown',
+          response_time_ms: r.response_time_ms,
+          last_check: new Date(r.checked_at),
+          error: r.error
+        }))
+        ui.updateDeviceStatuses(statusUpdates)
+        ui.addLog('info', `Status: ${online} online, ${offline} offline`)
       }
     } catch (error) {
       logger.error(`Status check failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      ui.addLog('error', `Status check failed: ${error instanceof Error ? error.message : 'Unknown'}`)
     }
   }
 

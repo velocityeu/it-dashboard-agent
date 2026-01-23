@@ -17,6 +17,7 @@ export interface AgentState {
   lastHeartbeat: Date | null
   segments: Map<string, SegmentState>
   discoveredDevices: Map<string, DiscoveredDevice>
+  deviceStatuses: Map<string, DeviceStatus>
   recentLogs: LogEntry[]
 }
 
@@ -32,6 +33,14 @@ export interface LogEntry {
   timestamp: Date
   level: 'info' | 'warn' | 'error' | 'debug'
   message: string
+}
+
+export interface DeviceStatus {
+  ip_address: string
+  status: 'online' | 'offline' | 'degraded' | 'unknown'
+  response_time_ms: number | null
+  last_check: Date
+  error?: string
 }
 
 export class AgentUI {
@@ -57,6 +66,7 @@ export class AgentUI {
       lastHeartbeat: null,
       segments: new Map(),
       discoveredDevices: new Map(),
+      deviceStatuses: new Map(),
       recentLogs: [],
     }
 
@@ -164,6 +174,7 @@ export class AgentUI {
         progress: s.progress,
       })),
       devices: Array.from(this.state.discoveredDevices.values()),
+      deviceStatuses: Array.from(this.state.deviceStatuses.values()),
       logs: this.state.recentLogs.slice(-50),
     }
   }
@@ -234,6 +245,13 @@ export class AgentUI {
     }
 
     this.io.emit('devices', Array.from(this.state.discoveredDevices.values()))
+  }
+
+  updateDeviceStatuses(statuses: DeviceStatus[]) {
+    for (const status of statuses) {
+      this.state.deviceStatuses.set(status.ip_address, status)
+    }
+    this.io.emit('deviceStatuses', Array.from(this.state.deviceStatuses.values()))
   }
 
   addLog(level: LogEntry['level'], message: string) {
