@@ -1,3 +1,5 @@
+import os from 'os'
+
 /**
  * Parse CIDR notation to get list of IP addresses
  */
@@ -84,8 +86,6 @@ export function normalizeMac(mac: string): string {
  * Used to determine whether to use ARP (local) or ping sweep (remote) for discovery.
  */
 export function isLocalNetwork(cidr: string): boolean {
-  // Import os here to avoid top-level import issues
-  const os = require('os')
   const interfaces = os.networkInterfaces()
 
   const [targetIp, targetPrefixStr] = cidr.split('/')
