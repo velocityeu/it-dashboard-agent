@@ -45,6 +45,14 @@ function numToIp(num: number): string {
 }
 
 /**
+ * Convert IP address string to number
+ */
+export function ipToNum(ip: string): number {
+  const parts = ip.split('.').map(p => parseInt(p, 10))
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+}
+
+/**
  * Check if an IP is within a CIDR range
  */
 export function isInCidr(ip: string, cidr: string): boolean {
@@ -59,14 +67,6 @@ export function isInCidr(ip: string, cidr: string): boolean {
 }
 
 /**
- * Convert IP address string to number
- */
-function ipToNum(ip: string): number {
-  const parts = ip.split('.').map(p => parseInt(p, 10))
-  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
-}
-
-/**
  * Normalize MAC address to AA:BB:CC:DD:EE:FF format
  */
 export function normalizeMac(mac: string): string {
@@ -77,4 +77,58 @@ export function normalizeMac(mac: string): string {
   }
   // Format as AA:BB:CC:DD:EE:FF
   return cleaned.match(/.{2}/g)?.join(':') || mac
+}
+
+/**
+ * Check if a CIDR range overlaps with any local network interface.
+ * Used to determine whether to use ARP (local) or ping sweep (remote) for discovery.
+ */
+export function isLocalNetwork(cidr: string): boolean {
+  // Import os here to avoid top-level import issues
+  const os = require('os')
+  const interfaces = os.networkInterfaces()
+
+  const [targetIp, targetPrefixStr] = cidr.split('/')
+  const targetPrefix = parseInt(targetPrefixStr, 10)
+  const targetNum = ipToNum(targetIp)
+  const targetMask = ~((1 << (32 - targetPrefix)) - 1) >>> 0
+
+  for (const name of Object.keys(interfaces)) {
+    const addrs = interfaces[name]
+    if (!addrs) continue
+
+    for (const addr of addrs) {
+      // Only check IPv4 addresses
+      if (addr.family !== 'IPv4') continue
+
+      const localIp = addr.address
+      const localNetmask = addr.netmask
+
+      // Calculate local network from IP and netmask
+      const localNum = ipToNum(localIp)
+      const localMaskNum = ipToNum(localNetmask)
+      const localNetwork = (localNum & localMaskNum) >>> 0
+
+      // Calculate target network
+      const targetNetwork = (targetNum & targetMask) >>> 0
+
+      // Check if the networks overlap
+      // They overlap if either network contains the other
+      const targetInLocal = (targetNum & localMaskNum) === localNetwork
+      const localInTarget = (localNum & targetMask) === targetNetwork
+
+      if (targetInLocal || localInTarget) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Expand a CIDR to all usable IP addresses
+ */
+export function expandCidr(cidr: string): string[] {
+  return parseCidr(cidr)
 }

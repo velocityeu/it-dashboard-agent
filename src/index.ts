@@ -2,7 +2,7 @@ import os from 'os'
 import { loadConfig } from './config.js'
 import { createLogger } from './utils/logger.js'
 import { DashboardClient, type NetworkSegment, type DeviceToMonitor, type StatusReport } from './api/client.js'
-import { arpScan, populateArpCache, type DiscoveredDevice } from './scanner/arp.js'
+import { discoverDevices, type DiscoveredDevice } from './scanner/discover.js'
 import { pingHost } from './scanner/ping.js'
 import { checkTcpPort } from './scanner/tcp.js'
 import { checkHttp } from './scanner/http.js'
@@ -125,16 +125,8 @@ async function main() {
       ui.updateScanProgress(segment.id, 10, true)
       ui.addLog('info', `Scanning: ${segment.name}`)
 
-      // Populate ARP cache first
-      await populateArpCache(segment.cidr, logger)
-      ui.updateScanProgress(segment.id, 40, true)
-
-      // Small delay for ARP cache to populate
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      ui.updateScanProgress(segment.id, 60, true)
-
-      // Scan ARP table
-      const devices = await arpScan(segment.cidr, logger)
+      // Discover devices - automatically uses ARP for local or ping sweep for remote
+      const devices = await discoverDevices(segment.cidr, logger)
       ui.updateScanProgress(segment.id, 80, true)
 
       if (devices.length > 0) {
@@ -262,7 +254,7 @@ async function main() {
       // Apply status hysteresis to prevent rapid flapping
       // Device only goes offline after FAILURE_THRESHOLD consecutive failures
       const stabilizedReports = reports.map(report => {
-        const deviceKey = report.device_id
+        const deviceKey = report.ip_address // Use ip_address as key (always present)
         const rawStatus = report.status
 
         if (rawStatus === 'online') {
