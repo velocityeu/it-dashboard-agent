@@ -14,7 +14,7 @@ set -e
 # Version and constants
 VERSION="1.0.0"
 INSTALL_PATH="/opt/it-dashboard-agent"
-REPO_URL="https://github.com/velocityeu/it-dashboard-agent.git"
+ZIP_URL="https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip"
 DEFAULT_DASHBOARD_URL="https://it-dashboard-gray.vercel.app"
 SERVICE_NAME="it-dashboard-agent"
 
@@ -287,39 +287,100 @@ remove_existing() {
     rm -rf "$INSTALL_PATH"
 }
 
-# Clone repository
-clone_repository() {
-    echo -e "${CYAN}Cloning repository...${NC}"
+# Download repository as ZIP (no Git required)
+download_repository() {
+    echo -e "${CYAN}Downloading source code...${NC}"
 
-    if ! command_exists git; then
-        print_error "Git is not installed."
+    local zip_path="/tmp/it-dashboard-agent-source.zip"
+    local extract_path="/tmp/it-dashboard-agent-extract"
+
+    # Check for required tools
+    if ! command_exists curl; then
+        print_error "curl is not installed."
+        exit 1
+    fi
+
+    if ! command_exists unzip; then
+        print_error "unzip is not installed."
         if [[ "$OS" == "macos" ]]; then
-            echo "Install with: xcode-select --install"
+            echo "Install with: brew install unzip"
         elif [[ "$OS" == "linux" ]]; then
-            echo "Install with: apt-get install git (or your package manager)"
+            echo "Install with: apt-get install unzip (or your package manager)"
         fi
         exit 1
     fi
 
-    git clone --depth 1 "$REPO_URL" "$INSTALL_PATH"
+    # Download ZIP
+    echo -e "${CYAN}Downloading from GitHub...${NC}"
+    curl -fsSL "$ZIP_URL" -o "$zip_path" || {
+        print_error "Failed to download source code"
+        exit 1
+    }
+
+    # Extract
+    echo -e "${CYAN}Extracting...${NC}"
+    rm -rf "$extract_path"
+    mkdir -p "$extract_path"
+    unzip -q "$zip_path" -d "$extract_path" || {
+        print_error "Failed to extract source code"
+        rm -f "$zip_path"
+        exit 1
+    }
+
+    # Move extracted folder to install path (GitHub extracts to repo-name-branch/)
+    local extracted_folder=$(find "$extract_path" -mindepth 1 -maxdepth 1 -type d | head -1)
+    mv "$extracted_folder" "$INSTALL_PATH"
+
+    # Cleanup
+    rm -f "$zip_path"
+    rm -rf "$extract_path"
 
     if [[ ! -f "$INSTALL_PATH/package.json" ]]; then
-        print_error "Clone succeeded but package.json not found"
+        print_error "Download succeeded but package.json not found"
         exit 1
     fi
 
-    print_success "Repository cloned"
+    print_success "Source code downloaded"
 }
 
-# Update repository
+# Update repository (re-download ZIP, preserving config and logs)
 update_repository() {
-    echo -e "${CYAN}Pulling latest changes...${NC}"
+    echo -e "${CYAN}Updating source code...${NC}"
 
-    cd "$INSTALL_PATH"
-    git fetch --depth 1 origin master
-    git reset --hard origin/master
+    local env_backup=""
+    local logs_backup="/tmp/it-dashboard-agent-logs-backup"
 
-    print_success "Repository updated"
+    # Backup .env file
+    if [[ -f "$INSTALL_PATH/.env" ]]; then
+        env_backup=$(cat "$INSTALL_PATH/.env")
+    fi
+
+    # Backup logs directory
+    if [[ -d "$INSTALL_PATH/logs" ]]; then
+        rm -rf "$logs_backup"
+        cp -r "$INSTALL_PATH/logs" "$logs_backup"
+    fi
+
+    # Remove old source
+    rm -rf "$INSTALL_PATH"
+
+    # Re-download
+    download_repository
+
+    # Restore .env
+    if [[ -n "$env_backup" ]]; then
+        echo "$env_backup" > "$INSTALL_PATH/.env"
+        chmod 600 "$INSTALL_PATH/.env"
+    fi
+
+    # Restore logs
+    if [[ -d "$logs_backup" ]]; then
+        mkdir -p "$INSTALL_PATH/logs"
+        cp -r "$logs_backup"/* "$INSTALL_PATH/logs/" 2>/dev/null || true
+        rm -rf "$logs_backup"
+    fi
+
+    print_success "Source code updated"
 }
 
 # Install dependencies
@@ -516,7 +577,7 @@ show_completion() {
 
     echo ""
     echo -e "${YELLOW}To uninstall, run:${NC}"
-    echo "  curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.sh | sudo bash"
+    echo "  curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.sh | sudo bash"
     echo ""
 }
 
@@ -570,8 +631,8 @@ main() {
         stop_service
         update_repository
     else
-        print_step $STEP $TOTAL_STEPS "Cloning repository..."
-        clone_repository
+        print_step $STEP $TOTAL_STEPS "Downloading source code..."
+        download_repository
     fi
 
     # Step 3: Get configuration

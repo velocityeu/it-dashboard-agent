@@ -26,7 +26,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 # Version and constants
 $Version = "1.0.0"
-$RepoUrl = "https://github.com/velocityeu/it-dashboard-agent.git"
+$ZipUrl = "https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip"
 $NssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
 $NssmPath = "$InstallPath\nssm.exe"
 $ServiceName = "ITDashboardAgent"
@@ -326,16 +326,11 @@ function Remove-ExistingInstall {
     }
 }
 
-function Clone-Repository {
-    Write-ColorText "Cloning repository..." "Cyan"
+function Download-Repository {
+    Write-ColorText "Downloading source code..." "Cyan"
 
-    # Check if git is available
-    $git = Get-Command git -ErrorAction SilentlyContinue
-    if (-not $git) {
-        Write-Error2 "Git is not installed. Please install Git and try again."
-        Write-ColorText "Download from: https://git-scm.com/download/win" "Yellow"
-        return $false
-    }
+    $zipPath = "$env:TEMP\it-dashboard-agent-source.zip"
+    $extractPath = "$env:TEMP\it-dashboard-agent-extract"
 
     try {
         # Create parent directory if needed
@@ -351,47 +346,83 @@ function Clone-Repository {
             return $false
         }
 
-        # Clone repository using Start-Process for better error capture
-        $tempLog = "$env:TEMP\git-clone-output.txt"
-        $process = Start-Process -FilePath "git" -ArgumentList "clone", "--depth", "1", $RepoUrl, $InstallPath -Wait -PassThru -NoNewWindow -RedirectStandardError $tempLog
+        # Download ZIP
+        Write-ColorText "Downloading from GitHub..." "Gray"
+        Invoke-WebRequest -Uri $ZipUrl -OutFile $zipPath -UseBasicParsing
 
-        if ($process.ExitCode -ne 0) {
-            $errorMsg = "Exit code: $($process.ExitCode)"
-            if (Test-Path $tempLog) {
-                $errorMsg = Get-Content $tempLog -Raw
-                Remove-Item $tempLog -Force -ErrorAction SilentlyContinue
-            }
-            throw "Git clone failed: $errorMsg"
+        # Extract
+        Write-ColorText "Extracting..." "Gray"
+        if (Test-Path $extractPath) {
+            Remove-Item $extractPath -Recurse -Force
         }
+        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
 
-        Remove-Item $tempLog -Force -ErrorAction SilentlyContinue
+        # Move extracted folder to install path (GitHub extracts to repo-name-branch/)
+        $extractedFolder = Get-ChildItem $extractPath -Directory | Select-Object -First 1
+        Move-Item -Path $extractedFolder.FullName -Destination $InstallPath
+
+        # Cleanup
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
 
         if (-not (Test-Path "$InstallPath\package.json")) {
-            throw "Clone succeeded but package.json not found"
+            throw "Download succeeded but package.json not found"
         }
 
-        Write-Success "Repository cloned"
+        Write-Success "Source code downloaded"
         return $true
     } catch {
-        Write-Error2 "Failed to clone repository: $_"
+        # Cleanup on failure
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Error2 "Failed to download source: $_"
         return $false
     }
 }
 
 function Update-Repository {
-    Write-ColorText "Pulling latest changes..." "Cyan"
+    Write-ColorText "Updating source code..." "Cyan"
 
     try {
-        Push-Location $InstallPath
-        & git fetch --depth 1 origin master 2>&1 | Out-Null
-        & git reset --hard origin/master 2>&1 | Out-Null
-        Pop-Location
+        # Backup .env file
+        $envBackup = $null
+        if (Test-Path "$InstallPath\.env") {
+            $envBackup = Get-Content "$InstallPath\.env" -Raw
+        }
 
-        Write-Success "Repository updated"
+        # Backup logs directory
+        $logsPath = "$InstallPath\logs"
+        $logsBackup = "$env:TEMP\it-dashboard-agent-logs-backup"
+        if (Test-Path $logsPath) {
+            Copy-Item $logsPath $logsBackup -Recurse -Force
+        }
+
+        # Remove old source
+        Remove-Item $InstallPath -Recurse -Force
+
+        # Re-download
+        if (-not (Download-Repository)) {
+            throw "Failed to download updated source"
+        }
+
+        # Restore .env
+        if ($envBackup) {
+            Set-Content -Path "$InstallPath\.env" -Value $envBackup -Encoding UTF8
+        }
+
+        # Restore logs
+        if (Test-Path $logsBackup) {
+            if (-not (Test-Path $logsPath)) {
+                New-Item -ItemType Directory -Path $logsPath -Force | Out-Null
+            }
+            Copy-Item "$logsBackup\*" $logsPath -Recurse -Force
+            Remove-Item $logsBackup -Recurse -Force
+        }
+
+        Write-Success "Source code updated"
         return $true
     } catch {
-        Pop-Location
-        Write-Error2 "Failed to update repository: $_"
+        Write-Error2 "Failed to update source: $_"
         return $false
     }
 }
@@ -573,7 +604,7 @@ function Show-Completion {
     Write-ColorText "  Logs:    Get-Content $InstallPath\logs\service.log -Tail 50" "White"
     Write-Host ""
     Write-ColorText "To uninstall, run:" "Yellow"
-    Write-ColorText "  irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.ps1 | iex" "White"
+    Write-ColorText "  irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.ps1 | iex" "White"
     Write-Host ""
 }
 
@@ -607,7 +638,7 @@ function Main {
             Remove-ExistingInstall
         }
         'Upgrade' {
-            # Will do git pull instead of clone
+            # Will re-download ZIP instead of fresh install
         }
     }
 
@@ -630,8 +661,8 @@ function Main {
         Write-Step $currentStep $totalSteps "Updating repository..."
         if (-not (Update-Repository)) { return }
     } else {
-        Write-Step $currentStep $totalSteps "Cloning repository..."
-        if (-not (Clone-Repository)) { return }
+        Write-Step $currentStep $totalSteps "Downloading source code..."
+        if (-not (Download-Repository)) { return }
     }
 
     # Step 3: Get configuration (only for new installs)
