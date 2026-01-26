@@ -4,7 +4,7 @@
 # Removes IT Dashboard Agent from macOS and Linux.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.sh | sudo bash
 #
 # Version: 1.0.0
 # Author: Velocity EU
@@ -65,7 +65,7 @@ check_root() {
         echo -e "${YELLOW}This script requires root privileges.${NC}"
         echo -e "${YELLOW}Please run with sudo:${NC}"
         echo ""
-        echo "  curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.sh | sudo bash"
+        echo "  curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.sh | sudo bash"
         echo ""
         exit 1
     fi

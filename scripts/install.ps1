@@ -6,7 +6,7 @@
     One-line installer for IT Dashboard Agent on Windows.
     Downloads, configures, and registers the agent as a Windows service.
 .EXAMPLE
-    irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.ps1 | iex
+    irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1 | iex
 .NOTES
     Version: 1.0.0
     Author: Velocity EU
@@ -87,7 +87,7 @@ function Request-Elevation {
         if (-not $scriptPath) {
             # Running from IEX, save script to temp and run
             $tempScript = "$env:TEMP\install-it-dashboard-agent.ps1"
-            $scriptContent = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.ps1" -UseBasicParsing).Content
+            $scriptContent = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1" -UseBasicParsing).Content
             Set-Content -Path $tempScript -Value $scriptContent -Encoding UTF8
             $scriptPath = $tempScript
         }

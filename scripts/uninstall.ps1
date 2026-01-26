@@ -5,7 +5,7 @@
 .DESCRIPTION
     Removes IT Dashboard Agent from Windows, including service and all files.
 .EXAMPLE
-    irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.ps1 | iex
+    irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.ps1 | iex
 .NOTES
     Version: 1.0.0
     Author: Velocity EU
@@ -50,7 +50,7 @@ function Request-Elevation {
         $scriptPath = $MyInvocation.PSCommandPath
         if (-not $scriptPath) {
             $tempScript = "$env:TEMP\uninstall-it-dashboard-agent.ps1"
-            $scriptContent = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.ps1" -UseBasicParsing).Content
+            $scriptContent = (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.ps1" -UseBasicParsing).Content
             Set-Content -Path $tempScript -Value $scriptContent -Encoding UTF8
             $scriptPath = $tempScript
         }

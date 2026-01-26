@@ -4,7 +4,7 @@
 # One-line installer for IT Dashboard Agent on macOS and Linux.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.sh | bash
 #
 # Version: 1.0.0
 # Author: Velocity EU
@@ -77,7 +77,7 @@ check_root() {
         print_warning "This script requires root privileges for installation to /opt"
         print_warning "Please run with sudo:"
         echo ""
-        echo "  curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.sh | sudo bash"
+        echo "  curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.sh | sudo bash"
         echo ""
         exit 1
     fi

@@ -6,12 +6,12 @@ Local network monitoring agent for the IT Dashboard. Discovers devices on your n
 
 **Windows** (PowerShell as Administrator):
 ```powershell
-irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1 | iex
 ```
 
 **macOS / Linux**:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.sh | sudo bash
 ```
 
 The installer will:
@@ -24,10 +24,10 @@ The installer will:
 **Uninstall:**
 ```powershell
 # Windows
-irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.ps1 | iex
 
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.sh | sudo bash
 ```
 
 ## Features
