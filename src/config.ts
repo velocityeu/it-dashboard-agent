@@ -10,6 +10,13 @@ export interface Config {
   heartbeatInterval: number
   statusCheckInterval: number
   logLevel: 'debug' | 'info' | 'warn' | 'error'
+  // Supabase Realtime settings (can be provided via env or heartbeat response)
+  supabaseUrl?: string
+  supabaseAnonKey?: string
+  enableRealtime: boolean
+  // Auto-scan settings
+  enableAutoScan: boolean
+  autoScanInterval: number // seconds between auto-scans
 }
 
 export function loadConfig(): Config {
@@ -31,5 +38,12 @@ export function loadConfig(): Config {
     heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL || '60', 10) * 1000,
     statusCheckInterval: parseInt(process.env.STATUS_CHECK_INTERVAL || '30', 10) * 1000,
     logLevel: (process.env.LOG_LEVEL as Config['logLevel']) || 'info',
+    // Supabase Realtime settings (optional - can be provided via heartbeat)
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+    enableRealtime: process.env.ENABLE_REALTIME !== 'false', // Default: true
+    // Auto-scan settings
+    enableAutoScan: process.env.ENABLE_AUTO_SCAN !== 'false', // Default: true
+    autoScanInterval: parseInt(process.env.AUTO_SCAN_INTERVAL || '300', 10), // Default: 5 minutes
   }
 }

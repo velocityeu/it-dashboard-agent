@@ -1,12 +1,14 @@
 import os from 'os'
 import { loadConfig } from './config.js'
 import { createLogger } from './utils/logger.js'
-import { DashboardClient, type NetworkSegment, type DeviceToMonitor, type StatusReport } from './api/client.js'
+import { DashboardClient, type NetworkSegment, type DeviceToMonitor, type StatusReport, type AgentCommand } from './api/client.js'
+import { RealtimeClient, type SegmentChangePayload } from './api/realtime-client.js'
 import { discoverDevices, type DiscoveredDevice } from './scanner/discover.js'
 import { pingHost } from './scanner/ping.js'
 import { checkTcpPort } from './scanner/tcp.js'
 import { checkHttp } from './scanner/http.js'
 import { AgentUI } from './ui/server.js'
+import { getPrimaryLocalNetwork, generateAutoSegmentName, type LocalNetwork } from './utils/network-detect.js'
 
 const VERSION = '1.0.0'
 
@@ -50,11 +52,232 @@ async function main() {
   // Track all discovered devices for UI
   const allDiscoveredDevices: DiscoveredDevice[] = []
 
+  // Realtime client and agent state
+  let realtimeClient: RealtimeClient | null = null
+  let agentId: string | null = null
+  let supabaseCredentials: { url: string; anonKey: string } | null = null
+
+  // Auto-registered segment tracking
+  let autoRegisteredSegment: NetworkSegment | null = null
+
+  /**
+   * Auto-detect local network and register segment with dashboard
+   */
+  async function autoRegisterLocalNetwork(): Promise<NetworkSegment | null> {
+    if (!config.enableAutoScan) {
+      logger.debug('Auto-scan disabled')
+      return null
+    }
+
+    logger.info('No segments assigned - detecting local network for auto-scan...')
+    ui.addLog('info', 'Detecting local network...')
+
+    const primaryNetwork = getPrimaryLocalNetwork()
+
+    if (!primaryNetwork) {
+      logger.warn('Could not detect local network for auto-scan')
+      ui.addLog('warn', 'No local network detected')
+      return null
+    }
+
+    logger.info(`Detected local network: ${primaryNetwork.cidr} on ${primaryNetwork.interfaceName}`)
+    ui.addLog('info', `Found: ${primaryNetwork.cidr} (${primaryNetwork.interfaceName})`)
+
+    try {
+      const segmentName = generateAutoSegmentName(primaryNetwork)
+      const segment = await client.registerAutoSegment({
+        cidr: primaryNetwork.cidr,
+        name: segmentName,
+        interface_name: primaryNetwork.interfaceName,
+      })
+
+      logger.info(`Auto-registered segment: ${segment.name} (${segment.id})`)
+      ui.addLog('info', `Registered: ${segment.name}`)
+
+      return segment
+    } catch (error) {
+      logger.error(`Failed to register auto-segment: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      ui.addLog('error', `Auto-register failed: ${error instanceof Error ? error.message : 'Unknown'}`)
+      return null
+    }
+  }
+
+  /**
+   * Initialize Supabase Realtime connection
+   */
+  async function initializeRealtime(url: string, anonKey: string): Promise<void> {
+    if (!config.enableRealtime) {
+      logger.info('Realtime disabled by configuration')
+      return
+    }
+
+    if (!agentId) {
+      logger.warn('Cannot initialize realtime: no agent ID')
+      return
+    }
+
+    // Skip if already connected with same credentials
+    if (realtimeClient?.connected && supabaseCredentials?.url === url) {
+      return
+    }
+
+    logger.info('Initializing Supabase Realtime connection...')
+    ui.addLog('info', 'Connecting to realtime...')
+
+    try {
+      // Disconnect existing client if any
+      if (realtimeClient) {
+        await realtimeClient.disconnect()
+      }
+
+      realtimeClient = new RealtimeClient({ supabaseUrl: url, supabaseAnonKey: anonKey, agentId }, logger)
+
+      // Set up callbacks
+      realtimeClient.onSegmentChanges(handleSegmentChange)
+      realtimeClient.onCommands(handleCommand)
+      realtimeClient.onConnection((status) => {
+        ui.updateRealtimeStatus(status === 'connected')
+        if (status === 'connected') {
+          ui.addLog('info', 'Realtime connected')
+        } else if (status === 'disconnected') {
+          ui.addLog('warn', 'Realtime disconnected')
+        } else {
+          ui.addLog('error', 'Realtime connection error')
+        }
+      })
+
+      await realtimeClient.connect()
+      supabaseCredentials = { url, anonKey }
+
+    } catch (error) {
+      logger.error(`Realtime initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      ui.addLog('error', `Realtime failed: ${error instanceof Error ? error.message : 'Unknown'}`)
+      realtimeClient = null
+    }
+  }
+
+  /**
+   * Handle segment changes from Supabase Realtime
+   */
+  function handleSegmentChange(payload: SegmentChangePayload): void {
+    logger.info(`Realtime segment change: ${payload.eventType}`)
+
+    if (payload.eventType === 'INSERT' && payload.new) {
+      // New segment assigned
+      const segment = payload.new
+      if (!segmentStates.has(segment.id)) {
+        segmentStates.set(segment.id, {
+          segment,
+          lastScan: 0,
+          scanning: false,
+        })
+        logger.info(`New segment via realtime: ${segment.name} (${segment.cidr})`)
+        ui.addLog('info', `New segment: ${segment.name}`)
+        ui.updateSegments(Array.from(segmentStates.values()).map(s => s.segment))
+
+        // Register scan callback
+        ui.setScanCallback(segment.id, async () => {
+          const state = segmentStates.get(segment.id)
+          if (state) await scanSegment(state)
+        })
+
+        // Trigger immediate scan
+        const state = segmentStates.get(segment.id)
+        if (state) {
+          scanSegment(state).catch(err => logger.error(`Realtime scan error: ${err}`))
+        }
+      }
+    } else if (payload.eventType === 'UPDATE' && payload.new) {
+      // Segment updated
+      const segment = payload.new
+      const state = segmentStates.get(segment.id)
+      if (state) {
+        state.segment = segment
+        logger.info(`Segment updated via realtime: ${segment.name}`)
+        ui.addLog('info', `Segment updated: ${segment.name}`)
+        ui.updateSegments(Array.from(segmentStates.values()).map(s => s.segment))
+      }
+    } else if (payload.eventType === 'DELETE' && payload.old) {
+      // Segment removed
+      const segmentId = payload.old.id
+      if (segmentStates.has(segmentId)) {
+        segmentStates.delete(segmentId)
+        logger.info(`Segment removed via realtime: ${payload.old.name}`)
+        ui.addLog('info', `Segment removed: ${payload.old.name}`)
+        ui.updateSegments(Array.from(segmentStates.values()).map(s => s.segment))
+      }
+    }
+  }
+
+  /**
+   * Handle commands from Supabase Realtime
+   */
+  async function handleCommand(command: AgentCommand): Promise<void> {
+    logger.info(`Executing command: ${command.command_type} (${command.id})`)
+    ui.addLog('info', `Command: ${command.command_type}`)
+
+    try {
+      switch (command.command_type) {
+        case 'scan_now':
+          // Scan all segments
+          for (const [, state] of segmentStates) {
+            scanSegment(state).catch(err => logger.error(`Command scan error: ${err}`))
+          }
+          break
+
+        case 'scan_segment':
+          // Scan specific segment
+          const segmentId = command.payload?.segment_id as string
+          if (segmentId) {
+            const state = segmentStates.get(segmentId)
+            if (state) {
+              await scanSegment(state)
+            } else {
+              throw new Error(`Segment not found: ${segmentId}`)
+            }
+          }
+          break
+
+        case 'update_config':
+          // Configuration updates (future)
+          logger.info('Config update received (not implemented)')
+          break
+
+        case 'restart':
+          // Agent restart request
+          logger.info('Restart command received - exiting for restart')
+          ui.addLog('warn', 'Restarting agent...')
+          await client.acknowledgeCommand(command.id, 'completed')
+          process.exit(0) // Exit for process manager to restart
+          break
+
+        default:
+          logger.warn(`Unknown command type: ${command.command_type}`)
+      }
+
+      await client.acknowledgeCommand(command.id, 'completed')
+    } catch (error) {
+      logger.error(`Command execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      await client.acknowledgeCommand(command.id, 'failed', error instanceof Error ? error.message : 'Unknown error')
+    }
+  }
+
   // Heartbeat function
   async function sendHeartbeat(): Promise<NetworkSegment[]> {
     try {
       const hostname = os.hostname()
       const response = await client.heartbeat(VERSION, hostname)
+
+      // Store agent ID for realtime subscription
+      if (response.agent_id && response.agent_id !== agentId) {
+        agentId = response.agent_id
+        logger.debug(`Agent ID: ${agentId}`)
+
+        // Update realtime client with new agent ID
+        if (realtimeClient) {
+          await realtimeClient.updateAgentId(agentId)
+        }
+      }
 
       logger.info(`Heartbeat successful: ${response.segments.length} segments assigned`)
 
@@ -63,8 +286,29 @@ async function main() {
       ui.updateHeartbeat()
       ui.addLog('info', `Heartbeat: ${response.segments.length} segments`)
 
+      // Initialize Supabase Realtime if credentials provided
+      const supabaseUrl = response.supabase_url || config.supabaseUrl
+      const supabaseKey = response.supabase_anon_key || config.supabaseAnonKey
+
+      if (supabaseUrl && supabaseKey && agentId && config.enableRealtime) {
+        // Initialize in background, don't block heartbeat
+        initializeRealtime(supabaseUrl, supabaseKey).catch(err => {
+          logger.error(`Realtime init failed: ${err}`)
+        })
+      }
+
+      // Handle auto-scan when no segments assigned
+      let segments = response.segments
+      if (segments.length === 0 && config.enableAutoScan && !autoRegisteredSegment) {
+        const autoSegment = await autoRegisterLocalNetwork()
+        if (autoSegment) {
+          autoRegisteredSegment = autoSegment
+          segments = [autoSegment]
+        }
+      }
+
       // Update segment states
-      for (const segment of response.segments) {
+      for (const segment of segments) {
         if (!segmentStates.has(segment.id)) {
           segmentStates.set(segment.id, {
             segment,
@@ -81,10 +325,10 @@ async function main() {
       }
 
       // Update UI with segments
-      ui.updateSegments(response.segments)
+      ui.updateSegments(segments)
 
       // Set up scan callbacks for UI
-      for (const segment of response.segments) {
+      for (const segment of segments) {
         ui.setScanCallback(segment.id, async () => {
           const state = segmentStates.get(segment.id)
           if (state) {
@@ -93,15 +337,17 @@ async function main() {
         })
       }
 
-      // Remove segments no longer assigned
+      // Remove segments no longer assigned (unless it's our auto-registered one)
       for (const [id] of segmentStates) {
-        if (!response.segments.find(s => s.id === id)) {
+        const stillAssigned = segments.find(s => s.id === id)
+        const isOurAutoSegment = autoRegisteredSegment?.id === id
+        if (!stillAssigned && !isOurAutoSegment) {
           segmentStates.delete(id)
           logger.info(`Segment removed: ${id}`)
         }
       }
 
-      return response.segments
+      return segments
     } catch (error) {
       logger.error(`Heartbeat failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       ui.updateConnectionStatus(false)
@@ -319,10 +565,24 @@ async function main() {
     // Initial heartbeat
     await sendHeartbeat()
 
-    // Start heartbeat interval
-    setInterval(async () => {
-      await sendHeartbeat()
-    }, config.heartbeatInterval)
+    // Heartbeat interval - longer when realtime is connected (fallback only)
+    // When realtime is working, heartbeat is just for keepalive and credential refresh
+    const getHeartbeatInterval = () => {
+      if (realtimeClient?.connected) {
+        // Use longer interval when realtime is providing updates
+        return Math.max(config.heartbeatInterval, 5 * 60 * 1000) // At least 5 minutes
+      }
+      return config.heartbeatInterval
+    }
+
+    // Dynamic heartbeat - check interval each time
+    const scheduleHeartbeat = () => {
+      setTimeout(async () => {
+        await sendHeartbeat()
+        scheduleHeartbeat() // Reschedule with potentially new interval
+      }, getHeartbeatInterval())
+    }
+    scheduleHeartbeat()
 
     // Start status check interval
     setInterval(async () => {
@@ -357,17 +617,37 @@ async function main() {
     }
 
     logger.info('Agent running. Press Ctrl+C to stop.')
+    if (config.enableRealtime) {
+      logger.info('Realtime mode enabled - segment updates will be pushed instantly')
+    }
+    if (config.enableAutoScan) {
+      logger.info('Auto-scan enabled - will detect local network if no segments assigned')
+    }
   }
 
   // Handle graceful shutdown
-  process.on('SIGINT', () => {
+  const shutdown = async () => {
     logger.info('Shutting down...')
+    ui.addLog('info', 'Shutting down...')
+
+    // Disconnect realtime client
+    if (realtimeClient) {
+      try {
+        await realtimeClient.disconnect()
+      } catch (error) {
+        logger.error(`Error disconnecting realtime: ${error}`)
+      }
+    }
+
     process.exit(0)
+  }
+
+  process.on('SIGINT', () => {
+    shutdown().catch(() => process.exit(1))
   })
 
   process.on('SIGTERM', () => {
-    logger.info('Shutting down...')
-    process.exit(0)
+    shutdown().catch(() => process.exit(1))
   })
 
   // Start the agent

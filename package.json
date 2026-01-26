@@ -11,6 +11,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "@types/express": "^5.0.6",
     "@types/node-ssdp": "^4.0.5",
     "axios": "^1.6.0",

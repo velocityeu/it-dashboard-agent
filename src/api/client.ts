@@ -6,6 +6,8 @@ export interface NetworkSegment {
   name: string
   cidr: string
   scan_interval_seconds: number
+  is_auto_registered?: boolean
+  interface_name?: string
 }
 
 export interface HeartbeatResponse {
@@ -14,6 +16,24 @@ export interface HeartbeatResponse {
   agent_name: string
   server_time: string
   segments: NetworkSegment[]
+  // Supabase credentials for realtime subscription
+  supabase_url?: string
+  supabase_anon_key?: string
+}
+
+export interface AutoSegmentRequest {
+  cidr: string
+  name: string
+  interface_name: string
+}
+
+export interface AgentCommand {
+  id: string
+  command_type: 'scan_now' | 'scan_segment' | 'update_config' | 'restart'
+  payload?: Record<string, unknown>
+  status: 'pending' | 'completed' | 'failed'
+  created_at: string
+  executed_at?: string
 }
 
 export interface DiscoveredDevice {
@@ -136,5 +156,34 @@ export class DashboardClient {
       reports,
     })
     return response.data
+  }
+
+  /**
+   * Register an auto-detected network segment with the dashboard
+   * Used when agent starts with no segments assigned
+   */
+  async registerAutoSegment(request: AutoSegmentRequest): Promise<NetworkSegment> {
+    this.logger.info(`Registering auto-detected segment: ${request.name} (${request.cidr})`)
+    const response = await this.client.post<{ success: boolean; segment: NetworkSegment }>(
+      '/api/agent/segments/register',
+      request
+    )
+    return response.data.segment
+  }
+
+  /**
+   * Acknowledge command execution to the dashboard
+   */
+  async acknowledgeCommand(
+    commandId: string,
+    status: 'completed' | 'failed',
+    error?: string
+  ): Promise<void> {
+    this.logger.debug(`Acknowledging command ${commandId}: ${status}`)
+    await this.client.post(`/api/agent/commands/${commandId}/ack`, {
+      status,
+      executed_at: new Date().toISOString(),
+      error,
+    })
   }
 }
