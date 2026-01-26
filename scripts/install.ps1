@@ -27,7 +27,12 @@ $ProgressPreference = 'SilentlyContinue'
 # Version and constants
 $Version = "1.0.0"
 $ZipUrl = "https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip"
-$NssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
+# NSSM download URLs (primary + fallbacks)
+$NssmUrls = @(
+    "https://nssm.cc/release/nssm-2.24.zip",
+    "https://github.com/kirillkovalenko/nssm/releases/download/v2.24-101/nssm-2.24-101.zip",
+    "https://web.archive.org/web/20230806122308/https://nssm.cc/release/nssm-2.24.zip"
+)
 $NssmPath = "$InstallPath\nssm.exe"
 $ServiceName = "ITDashboardAgent"
 $DefaultDashboardUrl = "https://it-dashboard-gray.vercel.app"
@@ -188,9 +193,25 @@ function Install-NSSM {
     $zipPath = "$env:TEMP\nssm.zip"
     $extractPath = "$env:TEMP\nssm-extract"
 
-    try {
-        Invoke-WebRequest -Uri $NssmUrl -OutFile $zipPath -UseBasicParsing
+    $downloaded = $false
+    foreach ($url in $NssmUrls) {
+        try {
+            Write-ColorText "Trying: $url" "Gray"
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 30
+            $downloaded = $true
+            break
+        } catch {
+            Write-ColorText "Failed, trying next mirror..." "Yellow"
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        }
+    }
 
+    if (-not $downloaded) {
+        Write-Error2 "Failed to download NSSM from all mirrors"
+        return $false
+    }
+
+    try {
         Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
 
         # Find nssm.exe (64-bit preferred)
@@ -217,6 +238,8 @@ function Install-NSSM {
         return $true
     } catch {
         Write-Error2 "Failed to install NSSM: $_"
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
         return $false
     }
 }
