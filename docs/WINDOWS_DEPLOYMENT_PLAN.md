@@ -74,7 +74,24 @@ oui-data@1.1.516      - MAC vendor database (~5MB)
 
 ### 1.4 Current Deployment Method
 
-Manual process requiring:
+**One-line installer** (implemented January 2026):
+```powershell
+irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1 | iex
+```
+
+The installer automatically:
+1. Checks/installs Node.js 18+ (via WinGet or direct MSI download)
+2. Downloads source as ZIP (no Git required)
+3. Prompts for configuration (Dashboard URL, API Key, Agent Name)
+4. Runs `npm install` and `npm run build`
+5. Downloads and installs NSSM (with fallback mirrors)
+6. Registers and starts Windows service
+
+**Tested on:**
+- ✅ Windows 11 Pro 23H2 (vanilla, no dev tools)
+- ✅ Windows Server 2025
+
+**Previous manual process** (still documented for reference):
 1. Install Node.js
 2. Clone repository
 3. Run `npm install`
@@ -82,13 +99,6 @@ Manual process requiring:
 5. Run `npm run build`
 6. Install NSSM
 7. Create Windows service manually
-
-**Problems:**
-- Requires technical expertise
-- Node.js version conflicts
-- Manual service configuration
-- No upgrade path
-- No centralized management
 
 ---
 
@@ -767,18 +777,19 @@ New-ADServiceAccount -Name "svc-itdashboard" -DNSHostName "svc-itdashboard.domai
 
 ### 9.1 Test Environments
 
-| Environment | OS | Purpose |
-|-------------|-------|---------|
-| Dev VM 1 | Windows 11 Pro 23H2 | Desktop development |
-| Test VM 1 | Windows Server 2016 | Legacy server support |
-| Test VM 2 | Windows Server 2019 | Standard server |
-| Test VM 3 | Windows Server 2022 | Latest server |
-| Test VM 4 | Windows 11 Enterprise | Enterprise desktop |
+| Environment | OS | Purpose | Status |
+|-------------|-------|---------|--------|
+| Dev VM 1 | Windows 11 Pro 23H2 | Desktop development | ✅ Tested |
+| Test VM 1 | Windows Server 2016 | Legacy server support | Pending |
+| Test VM 2 | Windows Server 2019 | Standard server | Pending |
+| Test VM 3 | Windows Server 2022 | Latest server | Pending |
+| Test VM 4 | Windows Server 2025 | Latest server | ✅ Tested |
+| Test VM 5 | Windows 11 Enterprise | Enterprise desktop | Pending |
 
 ### 9.2 Test Cases
 
 **Installation Tests:**
-- [ ] Fresh install (interactive)
+- [x] Fresh install (interactive) - ✅ Windows 11, Server 2025
 - [ ] Fresh install (silent)
 - [ ] Upgrade from previous version
 - [ ] Upgrade preserves configuration
@@ -991,20 +1002,25 @@ Describe "IT Dashboard Agent Installation" {
 
 **Verdict:** Viable fallback if pkg has issues.
 
-### 11.4 Alternative: NSSM (Current Approach)
+### 11.4 Alternative: NSSM (Current Approach - Implemented)
+
+**Status:** ✅ Implemented in one-line installer (January 2026)
 
 **Pros:**
 - Already documented
 - Works reliably
 - Simple setup
+- Auto-downloaded with fallback mirrors (nssm.cc → GitHub → Archive.org)
+- No Git dependency (ZIP download)
 
-**Cons:**
-- Requires manual Node.js installation
-- No installer
-- No configuration wizard
-- Harder for non-technical users
+**Implementation:**
+- One-line PowerShell installer handles everything
+- Node.js auto-installed via WinGet or MSI fallback
+- NSSM downloaded automatically with 3 fallback mirrors
+- Interactive configuration wizard built-in
+- Service registered and started automatically
 
-**Verdict:** Acceptable for technical users, but the proposed solution is better for wider deployment.
+**Verdict:** Now suitable for non-technical users via the one-line installer.
 
 ### 11.5 Alternative: nexe Instead of pkg
 

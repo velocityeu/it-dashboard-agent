@@ -16,10 +16,12 @@ curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/maste
 
 The installer will:
 1. Check for Node.js 18+ (installs if missing)
-2. Clone the repository to `/opt/it-dashboard-agent` (Unix) or `C:\ProgramData\it-dashboard-agent` (Windows)
+2. Download source code to `/opt/it-dashboard-agent` (Unix) or `C:\ProgramData\it-dashboard-agent` (Windows)
 3. Prompt for Dashboard URL, API Key, and Agent Name
 4. Build and install as a system service
 5. Start the agent automatically
+
+**No Git required** - the installer downloads a ZIP archive directly from GitHub.
 
 **Uninstall:**
 ```powershell
@@ -82,10 +84,12 @@ This ensures a single dropped packet doesn't cause the dashboard to show mislead
 
 ## Requirements
 
-- Node.js 18+
-- Windows, macOS, or Linux
+- Node.js 18+ (auto-installed by one-line installer)
+- Windows 10/11, Windows Server 2016+, macOS, or Linux
 - Network access to target segments
 - Dashboard API key
+
+**Note:** Git is NOT required. The one-line installer downloads source as a ZIP file.
 
 ## Installation
 
