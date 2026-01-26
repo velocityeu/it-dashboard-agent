@@ -2,6 +2,34 @@
 
 Local network monitoring agent for the IT Dashboard. Discovers devices on your network and reports their status to the cloud dashboard in real-time.
 
+## Quick Install
+
+**Windows** (PowerShell as Administrator):
+```powershell
+irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.ps1 | iex
+```
+
+**macOS / Linux**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/install.sh | sudo bash
+```
+
+The installer will:
+1. Check for Node.js 18+ (installs if missing)
+2. Clone the repository to `/opt/it-dashboard-agent` (Unix) or `C:\ProgramData\it-dashboard-agent` (Windows)
+3. Prompt for Dashboard URL, API Key, and Agent Name
+4. Build and install as a system service
+5. Start the agent automatically
+
+**Uninstall:**
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.ps1 | iex
+
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/main/scripts/uninstall.sh | sudo bash
+```
+
 ## Features
 
 - **Device Discovery**: Scans network segments using ARP to discover devices (IP, MAC, hostname, manufacturer)
