@@ -327,7 +327,10 @@ install_dependencies() {
     echo -e "${CYAN}Installing dependencies...${NC}"
 
     cd "$INSTALL_PATH"
-    npm ci --production 2>/dev/null || npm install --production
+    npm install || {
+        print_error "npm install failed"
+        exit 1
+    }
 
     print_success "Dependencies installed"
 }

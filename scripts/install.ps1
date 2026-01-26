@@ -402,13 +402,17 @@ function Install-Dependencies {
     try {
         Push-Location $InstallPath
 
-        # Use npm ci for clean install
+        # Check npm is available
         $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
         if (-not $npmCmd) {
             throw "npm not found in PATH"
         }
 
-        & npm ci --production 2>&1 | Out-Null
+        # Install all dependencies (need dev deps for build)
+        $npmOutput = & npm install 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm install failed: $npmOutput"
+        }
 
         Pop-Location
         Write-Success "Dependencies installed"
@@ -426,9 +430,11 @@ function Build-Agent {
     try {
         Push-Location $InstallPath
 
-        # Need dev dependencies for build
-        & npm install 2>&1 | Out-Null
-        & npm run build 2>&1 | Out-Null
+        # Run build
+        $buildOutput = & npm run build 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm run build failed: $buildOutput"
+        }
 
         if (-not (Test-Path "$InstallPath\dist\index.js")) {
             throw "Build completed but dist/index.js not found"
