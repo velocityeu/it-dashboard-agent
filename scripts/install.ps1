@@ -330,7 +330,13 @@ function Clone-Repository {
             New-Item -ItemType Directory -Path $parentPath -Force | Out-Null
         }
 
-        & git clone --depth 1 $RepoUrl $InstallPath 2>&1 | Out-Null
+        # Clone repository and capture output
+        $cloneOutput = & git clone --depth 1 $RepoUrl $InstallPath 2>&1
+        $cloneExitCode = $LASTEXITCODE
+
+        if ($cloneExitCode -ne 0) {
+            throw "Git clone failed: $cloneOutput"
+        }
 
         if (-not (Test-Path "$InstallPath\package.json")) {
             throw "Clone succeeded but package.json not found"
@@ -349,8 +355,8 @@ function Update-Repository {
 
     try {
         Push-Location $InstallPath
-        & git fetch --depth 1 origin main 2>&1 | Out-Null
-        & git reset --hard origin/main 2>&1 | Out-Null
+        & git fetch --depth 1 origin master 2>&1 | Out-Null
+        & git reset --hard origin/master 2>&1 | Out-Null
         Pop-Location
 
         Write-Success "Repository updated"

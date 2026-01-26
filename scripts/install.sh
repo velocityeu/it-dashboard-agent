@@ -316,8 +316,8 @@ update_repository() {
     echo -e "${CYAN}Pulling latest changes...${NC}"
 
     cd "$INSTALL_PATH"
-    git fetch --depth 1 origin main
-    git reset --hard origin/main
+    git fetch --depth 1 origin master
+    git reset --hard origin/master
 
     print_success "Repository updated"
 }
