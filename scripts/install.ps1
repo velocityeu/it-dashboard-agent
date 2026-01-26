@@ -303,12 +303,26 @@ function Remove-ExistingInstall {
     if ($service) {
         Write-ColorText "Removing existing service..." "Yellow"
         & $NssmPath remove $ServiceName confirm 2>$null
+        Start-Sleep -Seconds 2
     }
 
     # Remove directory
     if (Test-Path $InstallPath) {
         Write-ColorText "Removing existing installation..." "Yellow"
-        Remove-Item -Path $InstallPath -Recurse -Force
+        try {
+            Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
+            Start-Sleep -Seconds 1
+
+            if (Test-Path $InstallPath) {
+                throw "Directory still exists after removal attempt"
+            }
+            Write-Success "Existing installation removed"
+        } catch {
+            Write-Error2 "Failed to remove existing installation: $_"
+            Write-ColorText "Try closing any programs using files in: $InstallPath" "Yellow"
+            Write-ColorText "Or manually delete the directory and run installer again." "Yellow"
+            exit 1
+        }
     }
 }
 
@@ -330,13 +344,27 @@ function Clone-Repository {
             New-Item -ItemType Directory -Path $parentPath -Force | Out-Null
         }
 
-        # Clone repository and capture output
-        $cloneOutput = & git clone --depth 1 $RepoUrl $InstallPath 2>&1
-        $cloneExitCode = $LASTEXITCODE
-
-        if ($cloneExitCode -ne 0) {
-            throw "Git clone failed: $cloneOutput"
+        # Check if target directory exists
+        if (Test-Path $InstallPath) {
+            Write-Error2 "Directory already exists: $InstallPath"
+            Write-ColorText "Please remove it manually or choose 'Fresh install' option" "Yellow"
+            return $false
         }
+
+        # Clone repository using Start-Process for better error capture
+        $tempLog = "$env:TEMP\git-clone-output.txt"
+        $process = Start-Process -FilePath "git" -ArgumentList "clone", "--depth", "1", $RepoUrl, $InstallPath -Wait -PassThru -NoNewWindow -RedirectStandardError $tempLog
+
+        if ($process.ExitCode -ne 0) {
+            $errorMsg = "Exit code: $($process.ExitCode)"
+            if (Test-Path $tempLog) {
+                $errorMsg = Get-Content $tempLog -Raw
+                Remove-Item $tempLog -Force -ErrorAction SilentlyContinue
+            }
+            throw "Git clone failed: $errorMsg"
+        }
+
+        Remove-Item $tempLog -Force -ErrorAction SilentlyContinue
 
         if (-not (Test-Path "$InstallPath\package.json")) {
             throw "Clone succeeded but package.json not found"
