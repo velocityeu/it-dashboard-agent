@@ -326,22 +326,30 @@ In Supabase dashboard → Database → Replication:
 1. Enable replication for `network_segments` table
 2. Enable replication for `agent_commands` table
 
-### Row Level Security (RLS)
+### Row Level Security (RLS) - CRITICAL
 
-Ensure RLS policies allow the anon key to:
-- SELECT from `network_segments` (filtered by agent_id)
-- SELECT from `agent_commands` (filtered by agent_id)
+The agent uses the **anon key** for Supabase Realtime subscriptions. RLS policies MUST allow the anon role to SELECT from these tables, otherwise realtime updates won't be received.
 
-Example policy:
+**Required policy for agent_commands:**
 ```sql
-CREATE POLICY "Agents can read their segments"
-ON network_segments FOR SELECT
-USING (true);  -- Or more restrictive based on your auth model
-
-CREATE POLICY "Agents can read their commands"
-ON agent_commands FOR SELECT
-USING (true);
+-- Allow anon role to SELECT agent_commands for Realtime
+-- Without this, agents won't receive commands via Realtime!
+CREATE POLICY "Anon can read commands for realtime" ON agent_commands
+    FOR SELECT
+    TO anon
+    USING (true);
 ```
+
+**Required policy for network_segments:**
+```sql
+-- Allow anon role to SELECT network_segments for Realtime
+CREATE POLICY "Anon can read segments for realtime" ON network_segments
+    FOR SELECT
+    TO anon
+    USING (true);
+```
+
+**Note:** These policies allow reading only. Command acknowledgment and other writes use the service_role key via the dashboard API.
 
 ## Troubleshooting
 
