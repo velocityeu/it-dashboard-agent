@@ -35,62 +35,64 @@ export class AgentUpgrader {
    */
   async upgrade(): Promise<UpgradeResult> {
     const previousVersion = await this.getCurrentVersion()
-    this.logger.info(`Starting upgrade from v${previousVersion}`)
+    this.logger.info(`[UPGRADE] Starting upgrade from v${previousVersion}`)
 
     try {
       // Step 1: Create backup
-      this.logger.info('Creating backup of current installation...')
+      this.logger.info('[UPGRADE 1/6] Creating backup of current installation...')
       this.backupPath = await this.backup()
-      this.logger.info(`Backup created at: ${this.backupPath}`)
+      this.logger.info(`[UPGRADE 1/6] Backup created at: ${this.backupPath}`)
 
       // Step 2: Download new version
-      this.logger.info('Downloading new version...')
+      this.logger.info('[UPGRADE 2/6] Downloading new version...')
       const zipPath = await this.download()
-      this.logger.info(`Downloaded to: ${zipPath}`)
+      this.logger.info(`[UPGRADE 2/6] Download complete: ${zipPath}`)
 
       // Step 3: Extract
-      this.logger.info('Extracting archive...')
+      this.logger.info('[UPGRADE 3/6] Extracting archive...')
       const extractPath = await this.extract(zipPath)
-      this.logger.info(`Extracted to: ${extractPath}`)
+      this.logger.info(`[UPGRADE 3/6] Extracted to: ${extractPath}`)
 
       // Step 4: Build
-      this.logger.info('Installing dependencies and building...')
+      this.logger.info('[UPGRADE 4/6] Installing dependencies and building...')
       await this.build(extractPath)
-      this.logger.info('Build completed')
+      this.logger.info('[UPGRADE 4/6] Build completed')
 
       // Step 5: Verify
-      this.logger.info('Verifying new build...')
+      this.logger.info('[UPGRADE 5/6] Verifying new build...')
       const valid = await this.verify(extractPath)
       if (!valid) {
-        throw new Error('Build verification failed')
+        throw new Error('Build verification failed - dist/index.js or package.json not found')
       }
-      this.logger.info('Build verification passed')
+      this.logger.info('[UPGRADE 5/6] Build verification passed')
 
       // Step 6: Swap files
-      this.logger.info('Swapping files...')
+      this.logger.info('[UPGRADE 6/6] Swapping files...')
       await this.swap(extractPath)
-      this.logger.info('Files swapped successfully')
+      this.logger.info('[UPGRADE 6/6] Files swapped successfully')
 
       // Get new version
       const newVersion = await this.getCurrentVersion()
 
+      this.logger.info(`[UPGRADE] Upgrade complete: v${previousVersion} -> v${newVersion}`)
       return {
         success: true,
         previousVersion,
         newVersion,
       }
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-      this.logger.error(`Upgrade failed: ${errorMsg}`)
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      this.logger.error(`[UPGRADE] Upgrade failed: ${errorMsg}`)
 
       // Attempt rollback
       if (this.backupPath) {
-        this.logger.info('Attempting rollback...')
+        this.logger.info('[UPGRADE] Attempting rollback to previous version...')
         try {
           await this.rollback()
-          this.logger.info('Rollback completed')
+          this.logger.info('[UPGRADE] Rollback completed successfully')
         } catch (rollbackError) {
-          this.logger.error(`Rollback also failed: ${rollbackError}`)
+          const rollbackMsg = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+          this.logger.error(`[UPGRADE] Rollback also failed: ${rollbackMsg}`)
         }
       }
 
@@ -163,14 +165,14 @@ export class AgentUpgrader {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.info(`Download attempt ${attempt}/${maxRetries}...`)
+        this.logger.info(`[UPGRADE 2/6] Download attempt ${attempt}/${maxRetries}...`)
         return await this.downloadOnce()
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error))
-        this.logger.warn(`Download attempt ${attempt} failed: ${lastError.message}`)
+        this.logger.warn(`[UPGRADE 2/6] Download attempt ${attempt} failed: ${lastError.message}`)
 
         if (attempt < maxRetries) {
-          this.logger.info(`Retrying in ${retryDelayMs / 1000} seconds...`)
+          this.logger.info(`[UPGRADE 2/6] Retrying download in ${retryDelayMs / 1000} seconds...`)
           await this.sleep(retryDelayMs)
         }
       }
@@ -288,22 +290,22 @@ export class AgentUpgrader {
 
     // Check if this is a pre-built release
     if (existsSync(distIndexPath) && existsSync(nodeModulesPath)) {
-      this.logger.info('Pre-built release detected, skipping npm install and build')
+      this.logger.info('[UPGRADE 4/6] Pre-built release detected, skipping npm install and build')
       return
     }
 
     // Check if only dist exists (partial pre-built)
     if (existsSync(distIndexPath)) {
-      this.logger.info('Pre-built dist detected, only running npm install')
+      this.logger.info('[UPGRADE 4/6] Pre-built dist detected, only running npm install --production')
       await this.runCommand('npm', ['install', '--production'], { cwd: extractPath })
       return
     }
 
     // Full build required
-    this.logger.info('Running npm install...')
+    this.logger.info('[UPGRADE 4/6] Running npm install...')
     await this.runCommand('npm', ['install'], { cwd: extractPath })
 
-    this.logger.info('Running npm build...')
+    this.logger.info('[UPGRADE 4/6] Running npm run build...')
     await this.runCommand('npm', ['run', 'build'], { cwd: extractPath })
   }
 

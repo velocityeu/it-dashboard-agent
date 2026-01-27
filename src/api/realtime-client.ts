@@ -183,7 +183,8 @@ export class RealtimeClient {
       try {
         this.onSegmentChange(changePayload)
       } catch (error) {
-        this.logger.error(`Error in segment change callback: ${error}`)
+        const errMsg = error instanceof Error ? error.message : String(error)
+        this.logger.error(`[REALTIME] Error in segment change callback: ${errMsg}`)
       }
     }
   }
@@ -195,13 +196,14 @@ export class RealtimeClient {
     if (!payload.new) return
 
     const command = this.mapToCommand(payload.new)
-    this.logger.info(`Received command: ${command.command_type} (${command.id})`)
+    this.logger.info(`[REALTIME] Command received: '${command.command_type}' (id: ${command.id})`)
 
     if (this.onCommand) {
       try {
         this.onCommand(command)
       } catch (error) {
-        this.logger.error(`Error in command callback: ${error}`)
+        const errMsg = error instanceof Error ? error.message : String(error)
+        this.logger.error(`[REALTIME] Error in command callback: ${errMsg}`)
       }
     }
   }

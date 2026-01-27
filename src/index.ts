@@ -184,7 +184,10 @@ async function main() {
         // Trigger immediate scan
         const state = segmentStates.get(segment.id)
         if (state) {
-          scanSegment(state).catch(err => logger.error(`Realtime scan error: ${err}`))
+          scanSegment(state).catch(err => {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            logger.error(`[REALTIME] Scan failed for new segment '${segment.name}': ${errMsg}`)
+          })
         }
       }
     } else if (payload.eventType === 'UPDATE' && payload.new) {
@@ -213,15 +216,19 @@ async function main() {
    * Handle commands from Supabase Realtime
    */
   async function handleCommand(command: AgentCommand): Promise<void> {
-    logger.info(`Executing command: ${command.command_type} (${command.id})`)
+    logger.info(`[COMMAND] Received '${command.command_type}' (id: ${command.id}) - executing`)
     ui.addLog('info', `Command: ${command.command_type}`)
 
     try {
       switch (command.command_type) {
         case 'scan_now':
           // Scan all segments
+          logger.info(`[COMMAND:scan_now] Starting immediate scan of ${segmentStates.size} segment(s)`)
           for (const [, state] of segmentStates) {
-            scanSegment(state).catch(err => logger.error(`Command scan error: ${err}`))
+            scanSegment(state).catch(err => {
+              const errMsg = err instanceof Error ? err.message : String(err)
+              logger.error(`[COMMAND:scan_now] Scan failed for segment '${state.segment.name}': ${errMsg}`)
+            })
           }
           break
 
@@ -231,21 +238,23 @@ async function main() {
           if (segmentId) {
             const state = segmentStates.get(segmentId)
             if (state) {
+              logger.info(`[COMMAND:scan_segment] Scanning segment '${state.segment.name}' (${state.segment.cidr})`)
               await scanSegment(state)
             } else {
-              throw new Error(`Segment not found: ${segmentId}`)
+              logger.warn(`[COMMAND:scan_segment] Segment not found: ${segmentId}`)
+              throw new Error(`Segment not found: ${segmentId}. Available segments: ${Array.from(segmentStates.keys()).join(', ') || 'none'}`)
             }
           }
           break
 
         case 'update_config':
           // Configuration updates (future)
-          logger.info('Config update received (not implemented)')
+          logger.info('[COMMAND:update_config] Config update received (not implemented)')
           break
 
         case 'restart':
           // Agent restart request
-          logger.info('Restart command received - exiting for restart')
+          logger.info('[COMMAND:restart] Restart requested - shutting down for service manager restart')
           ui.addLog('warn', 'Restarting agent...')
           await client.acknowledgeCommand(command.id, 'completed')
           process.exit(0) // Exit for process manager to restart
@@ -253,7 +262,8 @@ async function main() {
 
         case 'upgrade':
           // Agent upgrade request
-          logger.info('Upgrade command received')
+          const targetVersion = command.payload?.target_version as string | undefined
+          logger.info(`[COMMAND:upgrade] Upgrade requested${targetVersion ? ` to version ${targetVersion}` : ' to latest version'}`)
           ui.addLog('info', 'Starting upgrade...')
 
           try {
@@ -261,11 +271,12 @@ async function main() {
             const downloadUrl = (command.payload?.download_url as string) ||
               'https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip'
 
+            logger.info(`[COMMAND:upgrade] Download URL: ${downloadUrl}`)
             const upgrader = new AgentUpgrader(getInstallPath(), downloadUrl, logger)
             const result = await upgrader.upgrade()
 
             if (result.success) {
-              logger.info(`Upgrade successful: ${result.previousVersion} -> ${result.newVersion}`)
+              logger.info(`[COMMAND:upgrade] Upgrade successful: v${result.previousVersion} -> v${result.newVersion}`)
               ui.addLog('info', `Upgraded to v${result.newVersion}`)
               await client.acknowledgeCommand(command.id, 'completed')
               // Exit so service manager restarts with new version
@@ -274,8 +285,8 @@ async function main() {
               throw new Error(result.error || 'Upgrade failed')
             }
           } catch (upgradeError) {
-            const errorMsg = upgradeError instanceof Error ? upgradeError.message : 'Unknown upgrade error'
-            logger.error(`Upgrade failed: ${errorMsg}`)
+            const errorMsg = upgradeError instanceof Error ? upgradeError.message : String(upgradeError)
+            logger.error(`[COMMAND:upgrade] Upgrade failed: ${errorMsg}`)
             ui.addLog('error', `Upgrade failed: ${errorMsg}`)
             await client.acknowledgeCommand(command.id, 'failed', errorMsg)
           }
@@ -283,19 +294,20 @@ async function main() {
 
         case 'ping':
           // Ping from dashboard - show visual/audio feedback
-          logger.info('Ping received from dashboard')
+          logger.info('[COMMAND:ping] Ping received from dashboard - responding with visual/audio feedback')
           ui.addLog('info', 'Ping received from dashboard')
           ui.showPingReceived()
           break
 
         default:
-          logger.warn(`Unknown command type: ${command.command_type}`)
+          logger.warn(`[COMMAND] Unknown command type: '${command.command_type}' - ignoring`)
       }
 
       await client.acknowledgeCommand(command.id, 'completed')
     } catch (error) {
-      logger.error(`Command execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
-      await client.acknowledgeCommand(command.id, 'failed', error instanceof Error ? error.message : 'Unknown error')
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      logger.error(`[COMMAND:${command.command_type}] Execution failed: ${errorMsg}`)
+      await client.acknowledgeCommand(command.id, 'failed', errorMsg)
     }
   }
 
@@ -694,7 +706,8 @@ async function main() {
         if (timeSinceLastScan >= interval) {
           // Don't await, let scans run in background
           scanSegment(state).catch(err => {
-            logger.error(`Segment scan error: ${err}`)
+            const errMsg = err instanceof Error ? err.message : String(err)
+            logger.error(`[SCAN] Scheduled scan failed for segment '${state.segment.name}': ${errMsg}`)
           })
         }
       }
@@ -703,7 +716,8 @@ async function main() {
     // Run initial segment scans
     for (const [, state] of segmentStates) {
       scanSegment(state).catch(err => {
-        logger.error(`Initial scan error: ${err}`)
+        const errMsg = err instanceof Error ? err.message : String(err)
+        logger.error(`[SCAN] Initial scan failed for segment '${state.segment.name}': ${errMsg}`)
       })
     }
 
