@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IT Dashboard Agent</title>
+  <title>IT Dashboard Agent | Velocity EU</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
   <script src="/socket.io/socket.io.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -243,13 +244,106 @@
       border-color: #7c3aed40;
       background: linear-gradient(135deg, #1e293b 0%, #1e293b 95%, #7c3aed10 100%);
     }
+    /* Velocity branding */
+    .velocity-logo {
+      height: 28px;
+      width: auto;
+      margin-right: 10px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+    }
+    /* Footer */
+    .footer {
+      border-top: 1px solid #334155;
+      padding: 16px 0;
+      margin-top: 40px;
+      text-align: center;
+      font-size: 0.875rem;
+      color: #64748b;
+    }
+    .footer a {
+      color: #f1f5f9;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .footer a:hover {
+      opacity: 0.8;
+    }
+    .footer-logo {
+      height: 18px;
+      width: auto;
+    }
+    /* Ping button and animation */
+    .btn-ping {
+      background: #334155;
+      color: #94a3b8;
+      margin-right: 8px;
+    }
+    .btn-ping:hover {
+      background: #475569;
+      color: #e2e8f0;
+    }
+    /* Sonar ping animation */
+    @keyframes sonar-pulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(241, 91, 64, 0.7);
+      }
+      50% {
+        box-shadow: 0 0 0 15px rgba(241, 91, 64, 0);
+      }
+      100% {
+        box-shadow: 0 0 0 0 rgba(241, 91, 64, 0);
+      }
+    }
+    .ping-received {
+      animation: sonar-pulse 0.8s ease-out 3;
+      border-radius: 6px;
+    }
+    /* Ping indicator overlay */
+    .ping-overlay {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      background: rgba(241, 91, 64, 0.2);
+      border: 2px solid #f15b40;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 1000;
+    }
+    .ping-overlay.active {
+      animation: sonar-expand 1s ease-out forwards;
+    }
+    @keyframes sonar-expand {
+      0% {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(0.5);
+      }
+      100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(3);
+      }
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>IT Dashboard Agent</h1>
+      <div class="header-left">
+        <img src="/velocity-symbol.png" alt="Velocity EU" class="velocity-logo">
+        <h1>IT Dashboard Agent</h1>
+      </div>
       <div style="display: flex; align-items: center;">
+        <button id="ping-dashboard-btn" class="btn btn-ping" title="Ping Dashboard">
+          Ping
+        </button>
         <div id="connection-status" class="status-badge disconnected">
           <span class="status-dot"></span>
           <span>Disconnected</span>
@@ -329,7 +423,23 @@
         </div>
       </div>
     </div>
+
+    <footer class="footer">
+      Powered by
+      <a href="https://velocity-eu.com" target="_blank" rel="noopener noreferrer">
+        <img src="/velocity-symbol.png" alt="Velocity EU" class="footer-logo">
+        Velocity EU
+      </a>
+    </footer>
   </div>
+
+  <!-- Ping overlay effect -->
+  <div id="ping-overlay" class="ping-overlay"></div>
+
+  <!-- Sonar ping sound -->
+  <audio id="sonar-audio" preload="auto">
+    <source src="/sounds/sonar-ping.mp3" type="audio/mpeg">
+  </audio>
 
   <script>
     const socket = io()
@@ -347,6 +457,9 @@
     const logsContainer = document.getElementById('logs-container')
     const devicesTableBody = document.getElementById('devices-table-body')
     const devicesCountBadge = document.getElementById('devices-count-badge')
+    const pingDashboardBtn = document.getElementById('ping-dashboard-btn')
+    const pingOverlay = document.getElementById('ping-overlay')
+    const sonarAudio = document.getElementById('sonar-audio')
 
     // State
     let state = {
@@ -419,6 +532,36 @@
       state.upgradeAvailable = info.upgradeAvailable
       updateVersionDisplay()
     })
+
+    // Handle ping received from dashboard
+    socket.on('pingReceived', () => {
+      showPingEffect()
+    })
+
+    // Ping Dashboard button click
+    pingDashboardBtn.addEventListener('click', () => {
+      socket.emit('pingDashboard')
+    })
+
+    // Show ping visual/audio effect
+    function showPingEffect() {
+      // Play sound
+      if (sonarAudio) {
+        sonarAudio.currentTime = 0
+        sonarAudio.play().catch(err => console.log('Audio play failed:', err))
+      }
+
+      // Show overlay animation
+      pingOverlay.classList.remove('active')
+      void pingOverlay.offsetWidth // Force reflow
+      pingOverlay.classList.add('active')
+
+      // Add pulse effect to header
+      document.querySelector('header').classList.add('ping-received')
+      setTimeout(() => {
+        document.querySelector('header').classList.remove('ping-received')
+      }, 2500)
+    }
 
     // UI Updates
     function updateUI() {

@@ -56,6 +56,7 @@ export class AgentUI {
   private logger: Logger
   private state: AgentState
   private scanCallbacks: Map<string, () => Promise<void>> = new Map()
+  private pingDashboardCallback: (() => Promise<void>) | null = null
 
   constructor(logger: Logger, agentName: string, dashboardUrl: string) {
     this.logger = logger
@@ -169,6 +170,16 @@ export class AgentUI {
           callback().catch((err) => this.logger.error(`Manual scan failed: ${err}`))
         }
       })
+
+      // Handle ping dashboard request from UI
+      socket.on('pingDashboard', async () => {
+        this.logger.info('Ping dashboard requested from UI')
+        if (this.pingDashboardCallback) {
+          this.pingDashboardCallback().catch((err) => {
+            this.logger.error(`Ping dashboard failed: ${err}`)
+          })
+        }
+      })
     })
   }
 
@@ -256,6 +267,15 @@ export class AgentUI {
 
   setScanCallback(segmentId: string, callback: () => Promise<void>) {
     this.scanCallbacks.set(segmentId, callback)
+  }
+
+  setPingDashboardCallback(callback: () => Promise<void>) {
+    this.pingDashboardCallback = callback
+  }
+
+  showPingReceived() {
+    this.logger.debug('Emitting pingReceived to UI')
+    this.io.emit('pingReceived')
   }
 
   updateScanProgress(segmentId: string, progress: number, isScanning: boolean) {

@@ -33,7 +33,7 @@ export interface AutoSegmentRequest {
 
 export interface AgentCommand {
   id: string
-  command_type: 'scan_now' | 'scan_segment' | 'update_config' | 'restart' | 'upgrade'
+  command_type: 'scan_now' | 'scan_segment' | 'update_config' | 'restart' | 'upgrade' | 'ping'
   payload?: Record<string, unknown>
   status: 'pending' | 'completed' | 'failed'
   created_at: string
@@ -188,6 +188,16 @@ export class DashboardClient {
       status,
       executed_at: new Date().toISOString(),
       error,
+    })
+  }
+
+  /**
+   * Send a ping from agent to dashboard
+   */
+  async pingDashboard(): Promise<void> {
+    this.logger.debug('Sending ping to dashboard')
+    await this.client.post('/api/agent/ping', {
+      timestamp: new Date().toISOString(),
     })
   }
 }

@@ -281,6 +281,13 @@ async function main() {
           }
           break
 
+        case 'ping':
+          // Ping from dashboard - show visual/audio feedback
+          logger.info('Ping received from dashboard')
+          ui.addLog('info', 'Ping received from dashboard')
+          ui.showPingReceived()
+          break
+
         default:
           logger.warn(`Unknown command type: ${command.command_type}`)
       }
@@ -633,6 +640,18 @@ async function main() {
   async function runLoop(): Promise<void> {
     // Start Agent UI server
     await ui.start(3001)
+
+    // Set up ping dashboard callback
+    ui.setPingDashboardCallback(async () => {
+      try {
+        await client.pingDashboard()
+        logger.info('Ping sent to dashboard')
+        ui.addLog('info', 'Ping sent to dashboard')
+      } catch (error) {
+        logger.error(`Failed to ping dashboard: ${error instanceof Error ? error.message : 'Unknown'}`)
+        ui.addLog('error', 'Failed to ping dashboard')
+      }
+    })
 
     // Initial heartbeat
     await sendHeartbeat()
