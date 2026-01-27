@@ -224,6 +224,57 @@ get_configuration() {
     echo ""
 }
 
+# Get installed version from package.json
+get_installed_version() {
+    if [[ -f "$INSTALL_PATH/package.json" ]]; then
+        grep '"version"' "$INSTALL_PATH/package.json" | head -1 | cut -d'"' -f4
+    fi
+}
+
+# Get latest version from GitHub
+get_latest_version() {
+    # Try GitHub releases first
+    local release_version
+    release_version=$(curl -s --max-time 10 "https://api.github.com/repos/velocityeu/it-dashboard-agent/releases/latest" 2>/dev/null | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+
+    if [[ -n "$release_version" ]]; then
+        echo "$release_version"
+        return
+    fi
+
+    # Fallback: get from package.json in repo
+    curl -s --max-time 10 "https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/package.json" 2>/dev/null | grep '"version"' | head -1 | cut -d'"' -f4
+}
+
+# Compare semantic versions
+# Returns: 0 if equal, 1 if v1 > v2, 2 if v1 < v2
+compare_versions() {
+    local v1="$1"
+    local v2="$2"
+
+    # Remove leading 'v' if present
+    v1="${v1#v}"
+    v2="${v2#v}"
+
+    # Split into parts
+    IFS='.' read -ra parts1 <<< "$v1"
+    IFS='.' read -ra parts2 <<< "$v2"
+
+    # Compare each part
+    for ((i=0; i<3; i++)); do
+        local p1="${parts1[$i]:-0}"
+        local p2="${parts2[$i]:-0}"
+
+        if ((p1 > p2)); then
+            return 1
+        elif ((p1 < p2)); then
+            return 2
+        fi
+    done
+
+    return 0
+}
+
 # Check for existing installation
 check_existing_install() {
     if [[ -d "$INSTALL_PATH" ]]; then
@@ -235,6 +286,29 @@ check_existing_install() {
             print_warning "Service '$SERVICE_NAME' is running"
         elif [[ "$OS" == "macos" ]] && launchctl list | grep -q "com.itdashboard.agent"; then
             print_warning "Service 'com.itdashboard.agent' is loaded"
+        fi
+
+        # Check versions
+        local installed_version
+        local latest_version
+        installed_version=$(get_installed_version)
+        latest_version=$(get_latest_version)
+
+        if [[ -n "$installed_version" ]]; then
+            echo -e "${CYAN}Installed version: v${installed_version}${NC}"
+        fi
+        if [[ -n "$latest_version" ]]; then
+            echo -e "${CYAN}Latest version:    v${latest_version}${NC}"
+
+            if [[ -n "$installed_version" ]]; then
+                compare_versions "$installed_version" "$latest_version"
+                local cmp_result=$?
+                if [[ $cmp_result -eq 2 ]]; then
+                    echo -e "${GREEN}An upgrade is available!${NC}"
+                else
+                    echo -e "${GREEN}You have the latest version.${NC}"
+                fi
+            fi
         fi
 
         echo ""

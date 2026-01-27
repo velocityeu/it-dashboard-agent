@@ -136,6 +136,39 @@ This ensures a single dropped packet doesn't cause the dashboard to show mislead
 | `HEARTBEAT_INTERVAL` | Heartbeat frequency (ms) | 60000 |
 | `STATUS_CHECK_INTERVAL` | Status check frequency (ms) | 30000 |
 | `LOG_LEVEL` | Logging level (debug/info/warn/error) | info |
+| `ENABLE_AUTO_UPGRADE` | Enable automatic upgrades | false |
+| `AUTO_UPGRADE_ON_MINOR` | Auto-upgrade minor versions (not just patches) | true |
+
+## Version Management
+
+The agent supports automatic version checking and upgrades.
+
+### Checking for Updates
+
+Every heartbeat, the dashboard returns the latest agent version. The agent UI shows:
+- Current version (stat card)
+- "Update Available" badge when a newer version exists
+
+### Upgrading
+
+**From Dashboard:**
+1. Go to Admin > Agents
+2. Find the agent with an outdated version (yellow/red badge)
+3. Click "Upgrade to vX.X.X"
+
+**From Installer:**
+Run the installer again and select `[U] Upgrade`.
+
+**Automatic Upgrades:**
+Set `ENABLE_AUTO_UPGRADE=true` in `.env` to enable auto-upgrades.
+
+| Upgrade Type | Auto-Upgrade Behavior |
+|--------------|----------------------|
+| Patch (1.0.0 → 1.0.1) | Always allowed |
+| Minor (1.0.0 → 1.1.0) | Allowed if `AUTO_UPGRADE_ON_MINOR=true` |
+| Major (1.0.0 → 2.0.0) | Never automatic (may have breaking changes) |
+
+See [docs/UPGRADE-MECHANISM.md](docs/UPGRADE-MECHANISM.md) for details.
 
 ## Agent UI
 
@@ -280,18 +313,29 @@ src/
 ├── index.ts              # Main entry point and orchestration
 ├── config.ts             # Configuration loader
 ├── api/
-│   └── client.ts         # Dashboard API client
+│   ├── client.ts         # Dashboard API client
+│   └── realtime-client.ts# Supabase realtime connection
 ├── scanner/
 │   ├── arp.ts            # ARP scanning and device discovery
 │   ├── ping.ts           # ICMP ping checks
 │   ├── tcp.ts            # TCP port checks
 │   └── http.ts           # HTTP/HTTPS checks
+├── upgrade/
+│   └── upgrader.ts       # Auto-upgrade with backup/rollback
 ├── ui/
 │   ├── server.ts         # Agent UI server (Express + Socket.IO)
 │   └── public/
 │       └── index.html    # Agent UI frontend
 └── utils/
-    └── logger.ts         # Winston logger setup
+    ├── logger.ts         # Winston logger setup
+    └── version.ts        # Centralized version management
+
+docs/
+├── VERSION-CONTROL.md    # Version policy and release process
+└── UPGRADE-MECHANISM.md  # How upgrades work
+
+tests/
+└── version.test.ts       # Version utility tests
 ```
 
 ## Troubleshooting

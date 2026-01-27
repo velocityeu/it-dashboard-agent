@@ -19,6 +19,10 @@ export interface HeartbeatResponse {
   // Supabase credentials for realtime subscription
   supabase_url?: string
   supabase_anon_key?: string
+  // Version management
+  latest_agent_version?: string
+  agent_download_url?: string
+  upgrade_available?: boolean
 }
 
 export interface AutoSegmentRequest {
@@ -29,7 +33,7 @@ export interface AutoSegmentRequest {
 
 export interface AgentCommand {
   id: string
-  command_type: 'scan_now' | 'scan_segment' | 'update_config' | 'restart'
+  command_type: 'scan_now' | 'scan_segment' | 'update_config' | 'restart' | 'upgrade'
   payload?: Record<string, unknown>
   status: 'pending' | 'completed' | 'failed'
   created_at: string

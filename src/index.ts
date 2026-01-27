@@ -1,7 +1,8 @@
 import os from 'os'
 import { loadConfig } from './config.js'
 import { createLogger } from './utils/logger.js'
-import { DashboardClient, type NetworkSegment, type DeviceToMonitor, type StatusReport, type AgentCommand } from './api/client.js'
+import { VERSION, shouldAutoUpgrade } from './utils/version.js'
+import { DashboardClient, type NetworkSegment, type DeviceToMonitor, type StatusReport, type AgentCommand, type HeartbeatResponse } from './api/client.js'
 import { RealtimeClient, type SegmentChangePayload } from './api/realtime-client.js'
 import { discoverDevices, type DiscoveredDevice } from './scanner/discover.js'
 import { pingHost } from './scanner/ping.js'
@@ -9,8 +10,7 @@ import { checkTcpPort } from './scanner/tcp.js'
 import { checkHttp } from './scanner/http.js'
 import { AgentUI } from './ui/server.js'
 import { getPrimaryLocalNetwork, generateAutoSegmentName, type LocalNetwork } from './utils/network-detect.js'
-
-const VERSION = '1.0.0'
+import { AgentUpgrader, getInstallPath } from './upgrade/upgrader.js'
 
 interface SegmentState {
   segment: NetworkSegment
@@ -251,6 +251,36 @@ async function main() {
           process.exit(0) // Exit for process manager to restart
           break
 
+        case 'upgrade':
+          // Agent upgrade request
+          logger.info('Upgrade command received')
+          ui.addLog('info', 'Starting upgrade...')
+
+          try {
+            // Get the download URL from the command payload or use a default
+            const downloadUrl = (command.payload?.download_url as string) ||
+              'https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip'
+
+            const upgrader = new AgentUpgrader(getInstallPath(), downloadUrl, logger)
+            const result = await upgrader.upgrade()
+
+            if (result.success) {
+              logger.info(`Upgrade successful: ${result.previousVersion} -> ${result.newVersion}`)
+              ui.addLog('info', `Upgraded to v${result.newVersion}`)
+              await client.acknowledgeCommand(command.id, 'completed')
+              // Exit so service manager restarts with new version
+              process.exit(0)
+            } else {
+              throw new Error(result.error || 'Upgrade failed')
+            }
+          } catch (upgradeError) {
+            const errorMsg = upgradeError instanceof Error ? upgradeError.message : 'Unknown upgrade error'
+            logger.error(`Upgrade failed: ${errorMsg}`)
+            ui.addLog('error', `Upgrade failed: ${errorMsg}`)
+            await client.acknowledgeCommand(command.id, 'failed', errorMsg)
+          }
+          break
+
         default:
           logger.warn(`Unknown command type: ${command.command_type}`)
       }
@@ -259,6 +289,28 @@ async function main() {
     } catch (error) {
       logger.error(`Command execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       await client.acknowledgeCommand(command.id, 'failed', error instanceof Error ? error.message : 'Unknown error')
+    }
+  }
+
+  /**
+   * Perform auto-upgrade when a new version is available
+   */
+  async function performAutoUpgrade(downloadUrl: string, newVersion: string): Promise<void> {
+    try {
+      const upgrader = new AgentUpgrader(getInstallPath(), downloadUrl, logger)
+      const result = await upgrader.upgrade()
+
+      if (result.success) {
+        logger.info(`Auto-upgrade successful: ${result.previousVersion} -> ${result.newVersion}`)
+        ui.addLog('info', `Auto-upgraded to v${result.newVersion}`)
+        // Exit so service manager restarts with new version
+        process.exit(0)
+      } else {
+        throw new Error(result.error || 'Auto-upgrade failed')
+      }
+    } catch (error) {
+      logger.error(`Auto-upgrade failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      throw error
     }
   }
 
@@ -295,6 +347,26 @@ async function main() {
         initializeRealtime(supabaseUrl, supabaseKey).catch(err => {
           logger.error(`Realtime init failed: ${err}`)
         })
+      }
+
+      // Update UI with version info
+      ui.updateVersionInfo(VERSION, response.latest_agent_version, response.upgrade_available)
+
+      // Check for auto-upgrade
+      if (response.upgrade_available && config.enableAutoUpgrade && response.agent_download_url) {
+        const latestVersion = response.latest_agent_version || '0.0.0'
+        if (shouldAutoUpgrade(latestVersion, VERSION, config.autoUpgradeOnMinor)) {
+          logger.info(`Auto-upgrade triggered: ${VERSION} -> ${latestVersion}`)
+          ui.addLog('info', `Auto-upgrading to v${latestVersion}...`)
+
+          // Perform upgrade in background
+          performAutoUpgrade(response.agent_download_url, latestVersion).catch(err => {
+            logger.error(`Auto-upgrade failed: ${err}`)
+            ui.addLog('error', `Auto-upgrade failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+          })
+        } else {
+          logger.debug(`Upgrade available (v${latestVersion}) but not auto-upgrading (major version change or disabled)`)
+        }
       }
 
       // Handle auto-scan when no segments assigned

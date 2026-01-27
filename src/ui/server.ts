@@ -20,6 +20,10 @@ export interface AgentState {
   discoveredDevices: Map<string, DiscoveredDevice>
   deviceStatuses: Map<string, DeviceStatus>
   recentLogs: LogEntry[]
+  // Version info
+  currentVersion: string
+  latestVersion: string | null
+  upgradeAvailable: boolean
 }
 
 export interface SegmentState {
@@ -71,6 +75,10 @@ export class AgentUI {
       discoveredDevices: new Map(),
       deviceStatuses: new Map(),
       recentLogs: [],
+      // Version info - will be updated on heartbeat
+      currentVersion: '0.0.0',
+      latestVersion: null,
+      upgradeAvailable: false,
     }
 
     this.setupRoutes()
@@ -91,6 +99,9 @@ export class AgentUI {
         lastHeartbeat: this.state.lastHeartbeat,
         segmentCount: this.state.segments.size,
         deviceCount: this.state.discoveredDevices.size,
+        currentVersion: this.state.currentVersion,
+        latestVersion: this.state.latestVersion,
+        upgradeAvailable: this.state.upgradeAvailable,
       })
     })
 
@@ -182,6 +193,9 @@ export class AgentUI {
       devices: Array.from(this.state.discoveredDevices.values()),
       deviceStatuses: Array.from(this.state.deviceStatuses.values()),
       logs: this.state.recentLogs.slice(-50),
+      currentVersion: this.state.currentVersion,
+      latestVersion: this.state.latestVersion,
+      upgradeAvailable: this.state.upgradeAvailable,
     }
   }
 
@@ -199,6 +213,17 @@ export class AgentUI {
   updateHeartbeat() {
     this.state.lastHeartbeat = new Date()
     this.io.emit('heartbeat', this.state.lastHeartbeat)
+  }
+
+  updateVersionInfo(currentVersion: string, latestVersion?: string, upgradeAvailable?: boolean) {
+    this.state.currentVersion = currentVersion
+    this.state.latestVersion = latestVersion || null
+    this.state.upgradeAvailable = upgradeAvailable || false
+    this.io.emit('versionInfo', {
+      currentVersion: this.state.currentVersion,
+      latestVersion: this.state.latestVersion,
+      upgradeAvailable: this.state.upgradeAvailable,
+    })
   }
 
   updateSegments(segments: NetworkSegment[]) {

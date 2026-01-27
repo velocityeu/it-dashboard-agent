@@ -183,7 +183,20 @@
       gap: 16px;
       margin-bottom: 20px;
     }
+    @media (max-width: 1024px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
     @media (max-width: 768px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    .update-available {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      background: #f59e0b20;
+      color: #fbbf24;
+      margin-top: 4px;
+      text-transform: uppercase;
+      animation: pulse 2s infinite;
+    }
     .stat-card {
       background: #1e293b;
       border-radius: 8px;
@@ -248,10 +261,17 @@
       </div>
     </header>
 
-    <div class="stats-grid">
+    <div class="stats-grid" style="grid-template-columns: repeat(5, 1fr);">
       <div class="stat-card">
         <div class="stat-label">Agent Name</div>
         <div class="stat-value" id="agent-name">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Version</div>
+        <div class="stat-value" id="agent-version">-</div>
+        <div id="update-badge" class="update-available" style="display:none">
+          Update Available
+        </div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Last Heartbeat</div>
@@ -318,6 +338,8 @@
     const connectionStatus = document.getElementById('connection-status')
     const realtimeStatus = document.getElementById('realtime-status')
     const agentName = document.getElementById('agent-name')
+    const agentVersion = document.getElementById('agent-version')
+    const updateBadge = document.getElementById('update-badge')
     const lastHeartbeat = document.getElementById('last-heartbeat')
     const segmentCount = document.getElementById('segment-count')
     const deviceCount = document.getElementById('device-count')
@@ -332,7 +354,10 @@
       devices: [],
       deviceStatuses: [],
       logs: [],
-      isRealtimeConnected: false
+      isRealtimeConnected: false,
+      currentVersion: '-',
+      latestVersion: null,
+      upgradeAvailable: false
     }
 
     // Socket events
@@ -388,6 +413,13 @@
       updateRealtimeStatus(isConnected)
     })
 
+    socket.on('versionInfo', (info) => {
+      state.currentVersion = info.currentVersion
+      state.latestVersion = info.latestVersion
+      state.upgradeAvailable = info.upgradeAvailable
+      updateVersionDisplay()
+    })
+
     // UI Updates
     function updateUI() {
       agentName.textContent = state.agentName || '-'
@@ -396,11 +428,23 @@
       }
       updateConnectionStatus(state.isConnected)
       updateRealtimeStatus(state.isRealtimeConnected)
+      updateVersionDisplay()
       segmentCount.textContent = state.segments?.length || 0
       deviceCount.textContent = state.devices?.length || 0
       renderSegments()
       renderDevices()
       renderLogs()
+    }
+
+    function updateVersionDisplay() {
+      const version = state.currentVersion || '-'
+      agentVersion.textContent = `v${version}`
+      if (state.upgradeAvailable && state.latestVersion) {
+        updateBadge.textContent = `v${state.latestVersion} Available`
+        updateBadge.style.display = 'inline-block'
+      } else {
+        updateBadge.style.display = 'none'
+      }
     }
 
     function updateConnectionStatus(isConnected) {

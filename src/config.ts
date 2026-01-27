@@ -17,6 +17,9 @@ export interface Config {
   // Auto-scan settings
   enableAutoScan: boolean
   autoScanInterval: number // seconds between auto-scans
+  // Auto-upgrade settings
+  enableAutoUpgrade: boolean // Default: false (opt-in)
+  autoUpgradeOnMinor: boolean // Default: true (auto-upgrade minor/patch versions)
 }
 
 export function loadConfig(): Config {
@@ -45,5 +48,8 @@ export function loadConfig(): Config {
     // Auto-scan settings
     enableAutoScan: process.env.ENABLE_AUTO_SCAN !== 'false', // Default: true
     autoScanInterval: parseInt(process.env.AUTO_SCAN_INTERVAL || '300', 10), // Default: 5 minutes
+    // Auto-upgrade settings
+    enableAutoUpgrade: process.env.ENABLE_AUTO_UPGRADE === 'true', // Default: false (opt-in)
+    autoUpgradeOnMinor: process.env.AUTO_UPGRADE_ON_MINOR !== 'false', // Default: true
   }
 }

@@ -278,6 +278,51 @@ function Get-Configuration {
     return $true
 }
 
+function Get-InstalledVersion {
+    $pkgPath = "$InstallPath\package.json"
+    if (Test-Path $pkgPath) {
+        try {
+            $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+            return $pkg.version
+        } catch {
+            return $null
+        }
+    }
+    return $null
+}
+
+function Get-LatestVersion {
+    try {
+        $release = Invoke-RestMethod "https://api.github.com/repos/velocityeu/it-dashboard-agent/releases/latest" -UseBasicParsing -TimeoutSec 10
+        return $release.tag_name -replace '^v', ''
+    } catch {
+        # Fallback: try to get version from package.json in repo
+        try {
+            $pkg = Invoke-RestMethod "https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/package.json" -UseBasicParsing -TimeoutSec 10
+            return $pkg.version
+        } catch {
+            return $null
+        }
+    }
+}
+
+function Compare-Versions {
+    param([string]$Version1, [string]$Version2)
+
+    $v1Parts = $Version1 -split '\.' | ForEach-Object { [int]$_ }
+    $v2Parts = $Version2 -split '\.' | ForEach-Object { [int]$_ }
+
+    # Pad to same length
+    while ($v1Parts.Count -lt $v2Parts.Count) { $v1Parts += 0 }
+    while ($v2Parts.Count -lt $v1Parts.Count) { $v2Parts += 0 }
+
+    for ($i = 0; $i -lt $v1Parts.Count; $i++) {
+        if ($v1Parts[$i] -lt $v2Parts[$i]) { return -1 }
+        if ($v1Parts[$i] -gt $v2Parts[$i]) { return 1 }
+    }
+    return 0
+}
+
 function Test-ExistingInstall {
     if (Test-Path $InstallPath) {
         Write-ColorText "`nExisting installation detected at: $InstallPath" "Yellow"
@@ -286,6 +331,23 @@ function Test-ExistingInstall {
         $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
         if ($service) {
             Write-ColorText "Service '$ServiceName' is $($service.Status)" "Yellow"
+        }
+
+        # Check versions
+        $installedVersion = Get-InstalledVersion
+        $latestVersion = Get-LatestVersion
+
+        if ($installedVersion) {
+            Write-ColorText "Installed version: v$installedVersion" "Cyan"
+        }
+        if ($latestVersion) {
+            Write-ColorText "Latest version:    v$latestVersion" "Cyan"
+
+            if ($installedVersion -and (Compare-Versions $installedVersion $latestVersion) -lt 0) {
+                Write-ColorText "An upgrade is available!" "Green"
+            } elseif ($installedVersion) {
+                Write-ColorText "You have the latest version." "Green"
+            }
         }
 
         Write-Host ""
