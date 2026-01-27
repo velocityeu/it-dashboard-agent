@@ -18,19 +18,23 @@ param(
     [string]$DashboardUrl,
     [string]$ApiKey,
     [string]$AgentName,
-    [switch]$Unattended
+    [switch]$Unattended,
+    [switch]$Offline
 )
+
+$script:OfflineMode = $Offline
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 # Version and constants
-$Version = "1.1.0"
+$Version = "3.0.0"
 $ZipUrl = "https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip"
+# Bundled NSSM path (check first before downloading)
+$BundledNssmPath = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\windows\nssm.exe"
 # NSSM download URLs (primary + fallbacks)
 $NssmUrls = @(
     "https://nssm.cc/release/nssm-2.24.zip",
-    "https://github.com/kirillkovalenko/nssm/releases/download/v2.24-101/nssm-2.24-101.zip",
     "https://web.archive.org/web/20230806122308/https://nssm.cc/release/nssm-2.24.zip"
 )
 $NssmPath = "$InstallPath\nssm.exe"
@@ -105,6 +109,7 @@ function Request-Elevation {
         if ($ApiKey) { $arguments += " -ApiKey `"$ApiKey`"" }
         if ($AgentName) { $arguments += " -AgentName `"$AgentName`"" }
         if ($Unattended) { $arguments += " -Unattended" }
+        if ($Offline) { $arguments += " -Offline" }
 
         Start-Process powershell -Verb RunAs -ArgumentList $arguments
         exit
@@ -187,6 +192,18 @@ function Install-NodeJS {
 function Install-NSSM {
     if (Test-Path $NssmPath) {
         return $true
+    }
+
+    # Check for bundled NSSM first
+    if (Test-Path $BundledNssmPath) {
+        Write-ColorText "Using bundled NSSM..." "Cyan"
+        try {
+            Copy-Item -Path $BundledNssmPath -Destination $NssmPath -Force
+            Write-Success "NSSM installed from bundled binary"
+            return $true
+        } catch {
+            Write-ColorText "Failed to copy bundled NSSM, will try downloading..." "Yellow"
+        }
     }
 
     Write-ColorText "Downloading NSSM (service manager)..." "Cyan"
@@ -671,6 +688,88 @@ function Start-AgentService {
     }
 }
 
+function Test-Prerequisites {
+    Write-ColorText "`nChecking prerequisites..." "Cyan"
+    $issues = @()
+
+    # Check Windows version (Windows 10 or later = version 10.0+)
+    $osVersion = [Environment]::OSVersion.Version
+    if ($osVersion.Major -lt 10) {
+        $issues += "Windows 10 or later required (detected: Windows $($osVersion.Major).$($osVersion.Minor))"
+    } else {
+        Write-ColorText "  [OK] Windows $($osVersion.Major).$($osVersion.Minor)" "Green"
+    }
+
+    # Check disk space (need at least 500MB free on install drive)
+    $installDrive = (Split-Path $InstallPath -Qualifier)
+    if (-not $installDrive) { $installDrive = "C:" }
+    try {
+        $disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='$installDrive'"
+        $freeSpaceGB = [math]::Round($disk.FreeSpace / 1GB, 2)
+        $requiredGB = 0.5
+        if ($freeSpaceGB -lt $requiredGB) {
+            $issues += "Insufficient disk space: ${freeSpaceGB}GB free, need ${requiredGB}GB minimum"
+        } else {
+            Write-ColorText "  [OK] Disk space: ${freeSpaceGB}GB free" "Green"
+        }
+    } catch {
+        Write-ColorText "  [?] Could not check disk space" "Yellow"
+    }
+
+    # Check port 3001 availability
+    try {
+        $portInUse = Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue
+        if ($portInUse) {
+            $process = Get-Process -Id $portInUse.OwningProcess -ErrorAction SilentlyContinue
+            $processName = if ($process) { $process.ProcessName } else { "Unknown" }
+            # Check if it's our own service
+            if ($processName -ne "node" -or -not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+                $issues += "Port 3001 is in use by: $processName (PID: $($portInUse.OwningProcess))"
+            } else {
+                Write-ColorText "  [OK] Port 3001 (used by existing agent)" "Green"
+            }
+        } else {
+            Write-ColorText "  [OK] Port 3001 available" "Green"
+        }
+    } catch {
+        Write-ColorText "  [?] Could not check port 3001" "Yellow"
+    }
+
+    # Check internet connectivity (unless offline mode)
+    if (-not $script:OfflineMode) {
+        try {
+            $testConnection = Test-Connection -ComputerName "github.com" -Count 1 -Quiet -ErrorAction SilentlyContinue
+            if (-not $testConnection) {
+                # Try alternative method
+                $webTest = Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
+                $testConnection = $webTest.StatusCode -eq 200
+            }
+            if ($testConnection) {
+                Write-ColorText "  [OK] Internet connectivity" "Green"
+            } else {
+                $issues += "No internet connectivity (required for download)"
+            }
+        } catch {
+            $issues += "No internet connectivity (required for download)"
+        }
+    }
+
+    # Report all issues
+    if ($issues.Count -gt 0) {
+        Write-Host ""
+        Write-ColorText "Prerequisites not met:" "Red"
+        foreach ($issue in $issues) {
+            Write-ColorText "  - $issue" "Red"
+        }
+        Write-Host ""
+        return $false
+    }
+
+    Write-ColorText "  All prerequisites passed!" "Green"
+    Write-Host ""
+    return $true
+}
+
 function Show-Completion {
     Write-Host ""
     Write-ColorText "========================================" "Green"
@@ -697,6 +796,12 @@ function Show-Completion {
 function Main {
     Write-Banner
     Request-Elevation
+
+    # Run prerequisite checks before anything else
+    if (-not (Test-Prerequisites)) {
+        Write-ColorText "Please resolve the issues above and try again." "Yellow"
+        return
+    }
 
     $totalSteps = 7
     $currentStep = 0

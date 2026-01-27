@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create release archive
+        run: |
+          # Create release directory
+          mkdir -p release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}
+
+          # Copy built files
+          cp -r dist release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/
+          cp -r node_modules release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/
+          cp -r bin release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/ 2>/dev/null || true
+          cp -r scripts release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/
+          cp -r src/ui/public release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/ui-public 2>/dev/null || true
+          cp package.json release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/
+          cp package-lock.json release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/
+          cp .env.example release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/ 2>/dev/null || true
+          cp README.md release/it-dashboard-agent-${{ steps.version.outputs.VERSION }}/ 2>/dev/null || true
+
+          # Create ZIP archive
+          cd release
+          zip -r ../it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.zip it-dashboard-agent-${{ steps.version.outputs.VERSION }}
+
+          # Create tarball for Linux/macOS
+          tar -czvf ../it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.tar.gz it-dashboard-agent-${{ steps.version.outputs.VERSION }}
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          cat << 'EOF' > release_notes.md
+          ## IT Dashboard Agent v${{ steps.version.outputs.VERSION }}
+
+          ### Installation
+
+          **Windows (one-line installer):**
+          ```powershell
+          irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1 | iex
+          ```
+
+          **Linux/macOS:**
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.sh | bash
+          ```
+
+          ### Pre-built Releases
+
+          For faster installation or offline deployment, download the pre-built archive:
+          - `it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.zip` (Windows)
+          - `it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.tar.gz` (Linux/macOS)
+
+          Pre-built releases include `node_modules` and compiled `dist/` - no `npm install` or build required.
+
+          ### Checksums
+          ```
+          SHA256 (zip): $(sha256sum it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.zip | cut -d' ' -f1)
+          SHA256 (tar.gz): $(sha256sum it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.tar.gz | cut -d' ' -f1)
+          ```
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release_notes.md
+          files: |
+            it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.zip
+            it-dashboard-agent-${{ steps.version.outputs.VERSION }}-prebuilt.tar.gz
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build Windows-specific artifact with NSSM bundled
+  build-windows:
+    name: Build Windows Package
+    runs-on: windows-latest
+    needs: build-and-release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download NSSM
+        shell: pwsh
+        run: |
+          $nssmDir = "bin/windows"
+          if (-not (Test-Path $nssmDir)) { New-Item -ItemType Directory -Path $nssmDir -Force }
+
+          # Check if NSSM already bundled
+          if (-not (Test-Path "$nssmDir/nssm.exe")) {
+            Write-Host "Downloading NSSM..."
+            $zipPath = "$env:TEMP/nssm.zip"
+            Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $zipPath -UseBasicParsing
+            Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP/nssm-extract" -Force
+            Copy-Item "$env:TEMP/nssm-extract/nssm-2.24/win64/nssm.exe" "$nssmDir/nssm.exe"
+            Remove-Item $zipPath -Force
+            Remove-Item "$env:TEMP/nssm-extract" -Recurse -Force
+          }
+
+      - name: Create Windows package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $packageDir = "release/it-dashboard-agent-$version-windows"
+
+          New-Item -ItemType Directory -Path $packageDir -Force
+
+          Copy-Item -Path "dist" -Destination "$packageDir/dist" -Recurse
+          Copy-Item -Path "node_modules" -Destination "$packageDir/node_modules" -Recurse
+          Copy-Item -Path "bin" -Destination "$packageDir/bin" -Recurse
+          Copy-Item -Path "scripts" -Destination "$packageDir/scripts" -Recurse
+          Copy-Item -Path "package.json" -Destination "$packageDir/"
+          Copy-Item -Path "package-lock.json" -Destination "$packageDir/"
+
+          Compress-Archive -Path "$packageDir" -DestinationPath "it-dashboard-agent-$version-windows.zip"
+
+      - name: Upload Windows artifact
+        uses: softprops/action-gh-release@v1
+        with:
+          files: it-dashboard-agent-${{ steps.version.outputs.VERSION }}-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -147,9 +147,42 @@ export class AgentUpgrader {
   }
 
   /**
-   * Download new version ZIP
+   * Sleep for specified milliseconds
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  /**
+   * Download new version ZIP with retry logic
    */
   private async download(): Promise<string> {
+    const maxRetries = 3
+    const retryDelayMs = 5000
+    let lastError: Error | null = null
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        this.logger.info(`Download attempt ${attempt}/${maxRetries}...`)
+        return await this.downloadOnce()
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        this.logger.warn(`Download attempt ${attempt} failed: ${lastError.message}`)
+
+        if (attempt < maxRetries) {
+          this.logger.info(`Retrying in ${retryDelayMs / 1000} seconds...`)
+          await this.sleep(retryDelayMs)
+        }
+      }
+    }
+
+    throw lastError || new Error('Download failed after all retries')
+  }
+
+  /**
+   * Single download attempt
+   */
+  private async downloadOnce(): Promise<string> {
     const tempDir = join(this.installPath, '..', 'it-dashboard-agent-upgrade-temp')
     mkdirSync(tempDir, { recursive: true })
 
@@ -247,12 +280,30 @@ export class AgentUpgrader {
 
   /**
    * Run npm install and build in extracted directory
+   * Skips if pre-built release is detected (has node_modules and dist/index.js)
    */
   private async build(extractPath: string): Promise<void> {
-    // Install dependencies
+    const distIndexPath = join(extractPath, 'dist', 'index.js')
+    const nodeModulesPath = join(extractPath, 'node_modules')
+
+    // Check if this is a pre-built release
+    if (existsSync(distIndexPath) && existsSync(nodeModulesPath)) {
+      this.logger.info('Pre-built release detected, skipping npm install and build')
+      return
+    }
+
+    // Check if only dist exists (partial pre-built)
+    if (existsSync(distIndexPath)) {
+      this.logger.info('Pre-built dist detected, only running npm install')
+      await this.runCommand('npm', ['install', '--production'], { cwd: extractPath })
+      return
+    }
+
+    // Full build required
+    this.logger.info('Running npm install...')
     await this.runCommand('npm', ['install'], { cwd: extractPath })
 
-    // Build
+    this.logger.info('Running npm build...')
     await this.runCommand('npm', ['run', 'build'], { cwd: extractPath })
   }
 

@@ -1,10 +1,21 @@
 # IT Dashboard Agent
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Local network monitoring agent for the IT Dashboard. Discovers devices on your network and reports their status to the cloud dashboard in real-time.
+
+## What's New in v3.0.0
+
+- **Log Rotation**: Automatic daily log rotation with 7-day retention and gzip compression
+- **Toast Notifications**: Non-blocking notifications replace browser alerts in dashboard
+- **Ping All Online Agents**: Dashboard ping button now pings all online agents in parallel
+- **Individual Ping Buttons**: Each agent card has a dedicated Ping button
+- **Improved Installer**: Pre-packaged NSSM binary, prerequisite checks (Windows version, disk space, port availability)
+- **Offline Installation**: Create air-gapped bundles for installations without internet
+- **Upgrade Retry Logic**: 3 retries with 5-second delays for failed downloads
+- **Pre-built Releases**: GitHub releases include node_modules for faster installation
 
 ## Quick Install
 
@@ -27,6 +38,28 @@ The installer will:
 
 **No Git required** - the installer downloads a ZIP archive directly from GitHub.
 
+### Pre-built Releases (Faster)
+
+Download pre-built releases from [GitHub Releases](https://github.com/velocityeu/it-dashboard-agent/releases) for faster installation - includes `node_modules` so no `npm install` required.
+
+### Offline Installation
+
+For air-gapped networks without internet:
+
+1. **On a machine with internet**, create an offline bundle:
+   ```powershell
+   .\scripts\create-offline-bundle.ps1 -IncludeNodeJs
+   ```
+
+2. Copy the generated `it-dashboard-agent-X.X.X-offline.zip` to the target machine
+
+3. **On the air-gapped machine**:
+   ```powershell
+   Expand-Archive it-dashboard-agent-*-offline.zip -DestinationPath .
+   cd it-dashboard-agent-*-offline
+   .\install-offline.ps1
+   ```
+
 **Uninstall:**
 ```powershell
 # Windows
@@ -45,7 +78,9 @@ curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/maste
 - **Firewall-Friendly**: Uses HTTPS outbound connections only (no inbound ports required)
 - **Multi-Segment**: Can monitor multiple network segments from a single agent
 - **Real-time Updates**: Status changes are pushed to dashboard instantly via Supabase Realtime
-- **Ping/Pong** (v2.0.0): Bidirectional connectivity test with sonar sound feedback
+- **Ping/Pong**: Bidirectional connectivity test with sonar sound feedback
+- **Log Rotation** (v3.0.0): Daily rotating logs with 7-day retention and compression
+- **Auto-Upgrade**: Safe upgrade mechanism with backup/rollback and retry logic
 
 ## Architecture
 
@@ -87,9 +122,15 @@ To prevent status flapping from brief network hiccups, the agent implements a **
 
 This ensures a single dropped packet doesn't cause the dashboard to show misleading status changes.
 
-## Ping/Pong Feature (v2.0.0)
+## Ping/Pong Feature
 
-Test connectivity with instant audio feedback:
+Test connectivity with instant audio feedback.
+
+**v3.0.0 improvements:**
+- "Ping All" now only pings online agents (skips offline)
+- Pings all online agents in parallel
+- Individual Ping button on each agent card in admin UI
+- Non-blocking toast notifications instead of alerts
 
 ```
 Dashboard                    Supabase                      Agent
@@ -159,8 +200,26 @@ Both sides play a sonar sound and the round-trip latency is displayed.
 | `HEARTBEAT_INTERVAL` | Heartbeat frequency (ms) | 60000 |
 | `STATUS_CHECK_INTERVAL` | Status check frequency (ms) | 30000 |
 | `LOG_LEVEL` | Logging level (debug/info/warn/error) | info |
+| `LOG_DIR` | Directory for log files | `./logs` |
 | `ENABLE_AUTO_UPGRADE` | Enable automatic upgrades | false |
 | `AUTO_UPGRADE_ON_MINOR` | Auto-upgrade minor versions (not just patches) | true |
+
+## Logging
+
+The agent uses Winston for logging with automatic daily rotation.
+
+**Log location:** `./logs/agent-YYYY-MM-DD.log`
+
+**Features:**
+- Daily log rotation at midnight
+- Maximum file size: 10MB (rotates if exceeded)
+- Retention: 7 days
+- Old logs compressed with gzip
+- Console output with colors, file output without
+
+**Log levels:** `debug`, `info`, `warn`, `error`
+
+Set via `LOG_LEVEL` environment variable (default: `info`).
 
 ## Version Management
 
@@ -218,7 +277,7 @@ The agent includes a built-in web interface for local monitoring and debugging.
 ```
 +--------------------------------------------------------------+
 |  IT Dashboard Agent - Home Office Agent                       |
-|  * Connected to dashboard                  Version: 2.0.0     |
+|  * Connected to dashboard                  Version: 3.0.0     |
 +--------------------------------------------------------------+
 |  Segments                                                     |
 |  +--------------------------------------------------------+ |
