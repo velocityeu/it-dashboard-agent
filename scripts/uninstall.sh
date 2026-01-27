@@ -6,7 +6,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.sh | sudo bash
 #
-# Version: 1.0.0
+# Version: 1.1.0
 # Author: Velocity EU
 
 set -e

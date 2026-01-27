@@ -4,7 +4,7 @@
  */
 
 // Agent version - UPDATE THIS for each release
-export const VERSION = '1.0.0'
+export const VERSION = '1.1.0'
 
 /**
  * Compare two semantic version strings

@@ -36,7 +36,7 @@ Dashboard UI                    Supabase                     Agent
 // Agent sends heartbeat
 POST /api/agent/heartbeat
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "hostname": "agent-pc",
   "uptime_seconds": 123
 }

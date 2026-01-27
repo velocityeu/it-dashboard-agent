@@ -8,7 +8,7 @@
 .EXAMPLE
     irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1 | iex
 .NOTES
-    Version: 1.0.0
+    Version: 1.1.0
     Author: Velocity EU
 #>
 
@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 # Version and constants
-$Version = "1.0.0"
+$Version = "1.1.0"
 $ZipUrl = "https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip"
 # NSSM download URLs (primary + fallbacks)
 $NssmUrls = @(

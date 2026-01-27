@@ -6,13 +6,13 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.sh | bash
 #
-# Version: 1.0.0
+# Version: 1.1.0
 # Author: Velocity EU
 
 set -e
 
 # Version and constants
-VERSION="1.0.0"
+VERSION="1.1.0"
 INSTALL_PATH="/opt/it-dashboard-agent"
 ZIP_URL="https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip"
 DEFAULT_DASHBOARD_URL="https://it-dashboard-gray.vercel.app"

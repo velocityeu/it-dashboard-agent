@@ -7,7 +7,7 @@
 .EXAMPLE
     irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/uninstall.ps1 | iex
 .NOTES
-    Version: 1.0.0
+    Version: 1.1.0
     Author: Velocity EU
 #>
 
