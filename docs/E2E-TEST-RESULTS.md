@@ -28,6 +28,27 @@
 | Connection dropping | FIXED | Stable WebSocket, no disconnections observed |
 | Bidirectional comm failure | FIXED | Both directions confirmed working |
 
+## Critical Fix Applied This Session
+
+### Issue: Commands Not Received via Realtime
+
+**Symptom:** Dashboard "Scan Now" button showed success alert, but agent never received the command.
+
+**Root Cause:** Missing Row Level Security (RLS) policy for `agent_commands` table. The agent uses the Supabase **anon key** for Realtime subscriptions, but the anon role had no SELECT permission on the table.
+
+**Fix Applied:**
+```sql
+-- Run in Supabase SQL Editor
+CREATE POLICY "Anon can read commands for realtime" ON agent_commands
+    FOR SELECT
+    TO anon
+    USING (true);
+```
+
+**Migration File:** `supabase/migrations/008_anon_commands_policy.sql`
+
+**After Fix:** Commands now received instantly via Realtime WebSocket.
+
 ## Detailed Test Results
 
 ### TEST 1: Agent → Dashboard (Heartbeat)
@@ -110,7 +131,12 @@
 
 ### TEST 5: Dashboard → Agent (Command: scan_now)
 
-**Test Method:** Manual SQL insert into `agent_commands` table:
+**Test Method 1:** Dashboard UI "Scan Now" button
+1. Navigate to Admin → Agents page
+2. Click "Scan Now" button next to online agent
+3. Alert confirms "Scan command sent to agent"
+
+**Test Method 2:** Manual SQL insert into `agent_commands` table:
 ```sql
 INSERT INTO agent_commands (agent_id, command_type, payload, status, created_at)
 VALUES (
@@ -122,15 +148,24 @@ VALUES (
 );
 ```
 
-**Expected Agent Response:**
+**Initial Test - FAILED (Before RLS Fix):**
+- Dashboard showed success alert
+- Agent never received command
+- No "Received command" in agent logs
+- **Cause:** Missing RLS policy for anon role on `agent_commands`
+
+**After RLS Fix - PASSED:**
 ```
-[info]: Received command: scan_now (command-uuid)
-[info]: Scanning segment: HomeOffice (10.117.1.0/24)
-[info]: Scanning segment: CORE (10.11.100.0/24)
-[info]: Scanning segment: UI (10.11.1.0/24)
+2026-01-27 02:15:23 [info]: Received command: scan_now (a494ca8f-7e4d-4910-b89f-c80e6be6d073)
+2026-01-27 02:15:23 [info]: Executing command: scan_now (a494ca8f-7e4d-4910-b89f-c80e6be6d073)
+2026-01-27 02:15:23 [info]: Scanning segment: HomeOffice (10.117.1.0/24)
+2026-01-27 02:15:23 [info]: Scanning segment: CORE (10.11.100.0/24)
+2026-01-27 02:15:23 [info]: Scanning segment: UI (10.11.1.0/24)
 ```
 
-**Dashboard UI Added:** "Scan Now" button on Admin → Agents page (commit cb14673)
+**Dashboard UI Added:** "Scan Now" button on Admin → Agents page
+- File: `src/app/admin/agents/page.tsx`
+- Button visible only when agent status is "online"
 
 ### TEST 6-9: Dashboard → Agent (Segment Operations)
 
@@ -209,3 +244,40 @@ LOG_LEVEL=info
 - [x] Commands from dashboard execute instantly
 - [x] Segment changes propagate via realtime (infrastructure ready)
 - [x] Agent UI reflects all state changes in real-time
+
+## Required Supabase Configuration
+
+### RLS Policies (Critical)
+
+The agent uses the Supabase **anon key** for Realtime subscriptions. These RLS policies MUST exist:
+
+**agent_commands table:**
+```sql
+CREATE POLICY "Anon can read commands for realtime" ON agent_commands
+    FOR SELECT
+    TO anon
+    USING (true);
+```
+
+**network_segments table:**
+```sql
+CREATE POLICY "Anon can read segments for realtime" ON network_segments
+    FOR SELECT
+    TO anon
+    USING (true);
+```
+
+### Replication Settings
+
+In Supabase Dashboard → Database → Replication:
+- Enable replication for `network_segments` table
+- Enable replication for `agent_commands` table
+
+## Troubleshooting Guide
+
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| "Subscribed to agent commands" but no commands received | Missing RLS policy | Add anon SELECT policy to `agent_commands` |
+| "Subscribed to segment changes" but no updates | Missing RLS policy | Add anon SELECT policy to `network_segments` |
+| No "Supabase Realtime connected" message | Invalid credentials or firewall | Check Supabase URL/key, allow wss:// |
+| Heartbeat fails | Invalid API key | Verify `AGENT_API_KEY` matches dashboard |
