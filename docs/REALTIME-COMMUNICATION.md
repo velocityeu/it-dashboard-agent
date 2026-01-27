@@ -1,6 +1,24 @@
 # Realtime Communication
 
-This document explains how bidirectional realtime communication works between the IT Dashboard Agent and the cloud dashboard.
+**Version:** 2.0.0
+
+This document explains how bidirectional realtime communication works between the IT Dashboard Agent and the cloud dashboard, including the rationale for choosing Supabase Realtime over alternatives.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Why Supabase Realtime?](#why-supabase-realtime)
+- [WebSocket vs Alternatives](#websocket-vs-alternatives)
+- [Architecture](#architecture)
+- [Connection Establishment](#connection-establishment)
+- [Channel Details](#channel-details)
+- [Command Types](#command-types)
+- [Ping/Pong Feature (v2.0.0)](#pingpong-feature-v200)
+- [Error Handling and Reconnection](#error-handling-and-reconnection)
+- [Supabase Configuration](#supabase-configuration)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Overview
 
@@ -9,24 +27,116 @@ The system uses **Supabase Realtime** for push-based communication from the dash
 - **Instant command execution** - No waiting for heartbeat polling
 - **Immediate segment updates** - New/modified segments take effect instantly
 - **Reduced latency** - Sub-second response to dashboard actions
+- **Bidirectional ping/pong** - Real-time connectivity verification with sound feedback
+
+---
+
+## Why Supabase Realtime?
+
+### The Problem
+
+We needed real-time communication between:
+1. **Cloud Dashboard** (Next.js on Vercel) - no persistent server
+2. **Local Agent** (Node.js on customer premises) - behind firewall
+
+Traditional approaches have limitations:
+- **Polling**: High latency, wasted requests
+- **Custom WebSocket server**: Additional infrastructure to maintain
+- **Firebase/Pusher**: Additional service dependency, cost
+
+### Why Supabase Realtime is the Right Choice
+
+| Feature | Benefit |
+|---------|---------|
+| **Built on PostgreSQL** | Uses native LISTEN/NOTIFY, no sync issues |
+| **Already using Supabase** | No additional service, one bill |
+| **Automatic reconnection** | Handles network hiccups gracefully |
+| **Row-level filtering** | Agent only receives its own commands |
+| **Scales with infrastructure** | No separate WebSocket server to scale |
+| **CDC (Change Data Capture)** | Database INSERT triggers push automatically |
+| **Anon key authentication** | Simple auth model, no custom JWT flow |
+
+### How It Works
+
+```
+1. Dashboard inserts command into agent_commands table
+2. PostgreSQL emits NOTIFY event
+3. Supabase Realtime broadcasts to WebSocket subscribers
+4. Agent receives push in ~100-300ms
+5. Agent executes command immediately
+```
+
+No polling, no custom infrastructure, no added complexity.
+
+---
+
+## WebSocket vs Alternatives
+
+### Why WebSockets?
+
+| Protocol | Pros | Cons | Verdict |
+|----------|------|------|---------|
+| **WebSocket** | Bidirectional, persistent, low latency | Needs connection management | **Chosen** |
+| **HTTP Polling** | Simple, stateless | High latency (30-60s), wasted requests | Rejected |
+| **Long Polling** | Lower latency than polling | Complex, connection timeout issues | Rejected |
+| **SSE (Server-Sent Events)** | Simple server push | Server-to-client only, no bidirectional | Rejected |
+| **gRPC Streaming** | Efficient, typed | Overkill, not browser-compatible | Rejected |
+
+### WebSocket Advantages for This Use Case
+
+1. **Low Latency** - Commands arrive in <500ms instead of waiting for next poll
+2. **Bidirectional** - Both dashboard and agent can initiate communication
+3. **Persistent Connection** - No TCP handshake overhead per message
+4. **Efficient** - Only transfers data when there's something to send
+5. **Real-time UX** - Status changes, scan progress, ping/pong all instant
+
+### Why Not Custom WebSocket Server?
+
+We could run our own WebSocket server, but:
+- Additional infrastructure to deploy and maintain
+- Need to handle authentication, reconnection, scaling
+- Supabase Realtime does all this for free (included in plan)
+- PostgreSQL CDC ensures data consistency
+
+---
 
 ## Architecture
 
 ```
 Dashboard UI                    Supabase                     Agent
-     │                             │                           │
-     │  INSERT INTO agent_commands │                           │
-     ├────────────────────────────►│                           │
-     │                             │                           │
-     │                             │  WebSocket push           │
-     │                             ├──────────────────────────►│
-     │                             │                           │
-     │                             │                           │ Execute command
-     │                             │                           │
-     │                             │  POST /commands/{id}/ack  │
-     │                             │◄──────────────────────────┤
-     │                             │                           │
+     |                             |                           |
+     |  INSERT INTO agent_commands |                           |
+     +----------------------------->                           |
+     |                             |                           |
+     |                             |  WebSocket push           |
+     |                             +---------------------------->
+     |                             |                           |
+     |                             |                           | Execute command
+     |                             |                           |
+     |                             |  POST /commands/{id}/ack  |
+     |                             <----------------------------+
+     |                             |                           |
 ```
+
+### Connection Model
+
+```
++-----------------+     HTTPS (outbound)      +------------------+
+|                 |-------------------------->|                  |
+|     Agent       |                           |    Dashboard     |
+|    (Node.js)    |     WSS (outbound)        |   (Next.js +     |
+|                 |-------------------------->|    Supabase)     |
++-----------------+                           +------------------+
+       |                                              |
+       |              WSS (persistent)                |
+       +--------------------------------------------->|
+                   Supabase Realtime                  |
+                                                      |
+```
+
+**Key Point**: All connections are outbound from the agent. No inbound firewall rules required.
+
+---
 
 ## Connection Establishment
 
@@ -36,7 +146,7 @@ Dashboard UI                    Supabase                     Agent
 // Agent sends heartbeat
 POST /api/agent/heartbeat
 {
-  "version": "1.1.0",
+  "version": "2.0.0",
   "hostname": "agent-pc",
   "uptime_seconds": 123
 }
@@ -93,6 +203,8 @@ this.commandChannel = this.supabase
   }, this.handleCommand)
   .subscribe()
 ```
+
+---
 
 ## Channel Details
 
@@ -165,19 +277,22 @@ this.commandChannel = this.supabase
 }
 ```
 
+---
+
 ## Command Types
 
 | Command | Description | Payload |
 |---------|-------------|---------|
 | `scan_now` | Scan all segments immediately | `{}` |
 | `scan_segment` | Scan specific segment | `{ segment_id: 'uuid' }` |
+| `ping` | Send pong response (v2.0.0) | `{}` |
 | `upgrade` | Upgrade agent to latest version | `{ download_url?: 'url' }` |
 | `restart` | Restart agent process | `{}` |
 | `update_config` | Update runtime configuration | `{ key: value, ... }` |
 
-## Sending Commands from Dashboard
+### Sending Commands from Dashboard
 
-### Dashboard UI (Scan Now Button)
+**Dashboard UI (Scan Now Button):**
 
 ```typescript
 // src/app/admin/agents/page.tsx
@@ -190,7 +305,7 @@ const handleScanNow = async (agentId: string) => {
 }
 ```
 
-### Dashboard API
+**Dashboard API:**
 
 ```typescript
 // src/app/api/admin/agents/[id]/commands/route.ts
@@ -209,7 +324,7 @@ const { data: command } = await supabase
 // Supabase Realtime automatically pushes this to subscribed agent
 ```
 
-### Direct SQL (Testing)
+**Direct SQL (Testing):**
 
 ```sql
 INSERT INTO agent_commands (agent_id, command_type, payload, status, created_at)
@@ -222,7 +337,7 @@ VALUES (
 );
 ```
 
-## Command Acknowledgment
+### Command Acknowledgment
 
 After executing a command, the agent acknowledges it:
 
@@ -241,37 +356,214 @@ async acknowledgeCommand(
 }
 ```
 
-## Fallback Mode
+---
 
-When realtime is disabled or unavailable:
+## Ping/Pong Feature (v2.0.0)
+
+The ping/pong feature provides instant bidirectional connectivity verification with audio feedback.
+
+### Flow
+
+```
+Dashboard                    Supabase                      Agent
+    |                           |                            |
+    | Click "Ping" button       |                            |
+    |                           |                            |
+    |--- POST /commands ------->|                            |
+    |    {type: 'ping'}         |                            |
+    |                           |                            |
+    |                           |--- Realtime (INSERT) ----->|
+    |                           |    (agent_commands)        |
+    |                           |                            |
+    |                           |                    Play sonar sound
+    |                           |                    Record timestamp
+    |                           |                            |
+    |                           |<-- POST /agent/ping -------|
+    |                           |    {command_id, latency}   |
+    |                           |                            |
+    |                           | INSERT agent_pings         |
+    |                           |                            |
+    |<-- Realtime (INSERT) -----|                            |
+    |    (agent_pings)          |                            |
+    |                           |                            |
+    | Play sonar sound          |                            |
+    | Show latency              |                            |
+```
+
+### Agent Implementation
+
+```typescript
+// Handle ping command
+async function handlePingCommand(command: AgentCommand) {
+  const startTime = Date.now()
+
+  // Play sonar sound locally
+  playSound('sonar.mp3')
+
+  // Send pong response
+  await apiClient.post('/api/agent/ping', {
+    command_id: command.id,
+    latency_ms: Date.now() - startTime,
+  })
+
+  // Acknowledge command
+  await apiClient.acknowledgeCommand(command.id, 'completed')
+}
+```
+
+### Dashboard Implementation
+
+```typescript
+// Subscribe to agent_pings for real-time pong response
+supabase
+  .channel('pings')
+  .on('postgres_changes', {
+    event: 'INSERT',
+    schema: 'public',
+    table: 'agent_pings',
+  }, (payload) => {
+    // Play sonar sound
+    playSonarSound()
+
+    // Update UI with latency
+    setLatency(payload.new.latency_ms)
+  })
+  .subscribe()
+```
+
+### Why This Design?
+
+1. **Immediate feedback** - Both sides hear sonar sound
+2. **Latency measurement** - Know actual round-trip time
+3. **Connection verification** - Confirms WebSocket + REST both work
+4. **User confidence** - Audible confirmation agent is responsive
+
+---
+
+## Error Handling and Reconnection
+
+### Connection States
+
+```typescript
+type ConnectionState =
+  | 'connecting'    // Initial connection attempt
+  | 'connected'     // Successfully connected
+  | 'disconnected'  // Lost connection
+  | 'reconnecting'  // Attempting to reconnect
+```
+
+### Automatic Reconnection
+
+Supabase Realtime handles reconnection automatically:
+
+```typescript
+this.supabase = createClient(url, key, {
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
+})
+
+// Monitor connection state
+this.supabase.realtime.on('CONNECTION_STATE_CHANGE', (state) => {
+  logger.info(`Realtime connection: ${state}`)
+
+  if (state === 'CLOSED') {
+    // Will automatically attempt reconnection
+    this.emit('disconnected')
+  }
+
+  if (state === 'OPEN') {
+    this.emit('connected')
+  }
+})
+```
+
+### Reconnection Strategy
+
+| Attempt | Delay | Action |
+|---------|-------|--------|
+| 1 | 1s | Immediate retry |
+| 2 | 2s | Quick retry |
+| 3 | 4s | Backoff |
+| 4+ | 8s max | Capped backoff |
+
+### Fallback to Polling
+
+When Realtime is unavailable:
 
 ```env
 ENABLE_REALTIME=false
 ```
 
-The agent falls back to **polling via heartbeat**:
-
-1. Heartbeat every 60 seconds
-2. Dashboard includes pending commands in response
-3. Agent processes commands from heartbeat response
-4. Higher latency but still functional
-
-## Heartbeat Interval Adjustment
-
-When realtime is connected, heartbeat interval increases:
+Or if connection fails persistently:
 
 ```typescript
-// src/index.ts
-const getHeartbeatInterval = () => {
-  if (realtimeClient?.connected) {
-    // Longer interval when realtime provides updates
-    return Math.max(config.heartbeatInterval, 5 * 60 * 1000) // 5 minutes
+// Fallback logic in main loop
+if (!realtimeClient?.connected) {
+  // Use shorter heartbeat interval
+  const interval = config.heartbeatInterval // 60s
+
+  // Commands come via heartbeat response
+  const response = await apiClient.heartbeat()
+  if (response.pending_commands) {
+    for (const cmd of response.pending_commands) {
+      await handleCommand(cmd)
+    }
   }
-  return config.heartbeatInterval // 60 seconds
 }
 ```
 
-## Debugging Realtime
+---
+
+## Supabase Configuration
+
+### Required: Enable Realtime for Tables
+
+In Supabase dashboard -> Database -> Replication:
+
+1. Enable replication for `network_segments` table
+2. Enable replication for `agent_commands` table
+3. Enable replication for `agent_pings` table
+
+### Row Level Security (RLS) - CRITICAL
+
+The agent uses the **anon key** for Supabase Realtime subscriptions. RLS policies MUST allow the anon role to SELECT from these tables, otherwise realtime updates won't be received.
+
+**Required policy for agent_commands:**
+```sql
+-- Allow anon role to SELECT agent_commands for Realtime
+-- Without this, agents won't receive commands via Realtime!
+CREATE POLICY "Anon can read commands for realtime" ON agent_commands
+    FOR SELECT
+    TO anon
+    USING (true);
+```
+
+**Required policy for network_segments:**
+```sql
+-- Allow anon role to SELECT network_segments for Realtime
+CREATE POLICY "Anon can read segments for realtime" ON network_segments
+    FOR SELECT
+    TO anon
+    USING (true);
+```
+
+**Required policy for agent_pings:**
+```sql
+-- Allow anon role to SELECT agent_pings for Realtime
+CREATE POLICY "Anon can read pings for realtime" ON agent_pings
+    FOR SELECT
+    TO anon
+    USING (true);
+```
+
+**Note:** These policies allow reading only. Command acknowledgment and other writes use the service_role key via the dashboard API.
+
+---
+
+## Troubleshooting
 
 ### Enable Debug Logging
 
@@ -299,6 +591,13 @@ LOG_LEVEL=debug
 [info]: Scanning segment: HomeOffice (10.117.1.0/24)
 ```
 
+**Ping Received:**
+```
+[info]: Received command: ping (def456-uuid)
+[info]: Playing sonar sound
+[info]: Sending pong response
+```
+
 **Segment Change Received:**
 ```
 [info]: Realtime segment change: INSERT
@@ -312,69 +611,51 @@ Check `http://localhost:3001/api/status`:
 ```json
 {
   "isConnected": true,
-  "isRealtimeConnected": true,  // Should be true
+  "isRealtimeConnected": true,
+  "version": "2.0.0",
   ...
 }
 ```
 
-## Supabase Configuration
+### Common Issues
 
-### Required: Enable Realtime for Tables
-
-In Supabase dashboard → Database → Replication:
-
-1. Enable replication for `network_segments` table
-2. Enable replication for `agent_commands` table
-
-### Row Level Security (RLS) - CRITICAL
-
-The agent uses the **anon key** for Supabase Realtime subscriptions. RLS policies MUST allow the anon role to SELECT from these tables, otherwise realtime updates won't be received.
-
-**Required policy for agent_commands:**
-```sql
--- Allow anon role to SELECT agent_commands for Realtime
--- Without this, agents won't receive commands via Realtime!
-CREATE POLICY "Anon can read commands for realtime" ON agent_commands
-    FOR SELECT
-    TO anon
-    USING (true);
-```
-
-**Required policy for network_segments:**
-```sql
--- Allow anon role to SELECT network_segments for Realtime
-CREATE POLICY "Anon can read segments for realtime" ON network_segments
-    FOR SELECT
-    TO anon
-    USING (true);
-```
-
-**Note:** These policies allow reading only. Command acknowledgment and other writes use the service_role key via the dashboard API.
-
-## Troubleshooting
-
-### Realtime Not Connecting
+#### Realtime Not Connecting
 
 1. Check Supabase URL and anon key in heartbeat response
 2. Verify firewall allows WebSocket connections (wss://)
 3. Check Supabase project is active (not paused)
 
-### Commands Not Received
+#### Commands Not Received
 
 1. Verify agent is subscribed: Look for "Subscribed to agent commands"
 2. Check `agent_id` in command matches agent
 3. Verify RLS policies allow SELECT on `agent_commands`
 4. Check Supabase replication is enabled for `agent_commands` table
 
-### Segment Changes Not Received
+#### Segment Changes Not Received
 
 1. Verify agent is subscribed: Look for "Subscribed to segment changes"
 2. Check `agent_id` on segment matches agent
 3. Verify RLS policies allow SELECT on `network_segments`
 4. Check Supabase replication is enabled for `network_segments` table
 
-### High Latency
+#### Ping/Pong Not Working
+
+1. Check agent is receiving `ping` command (logs)
+2. Verify `/api/agent/ping` endpoint is accessible
+3. Check `agent_pings` table has RLS policy for anon SELECT
+4. Check dashboard is subscribed to `agent_pings` changes
+
+#### High Latency
 
 1. Check network connectivity to Supabase
 2. Verify WebSocket is not being blocked/proxied
 3. Consider regional Supabase project placement
+
+---
+
+## Related Documentation
+
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - Full system architecture
+- [UPGRADE-MECHANISM.md](./UPGRADE-MECHANISM.md) - How agent upgrades work
+- [VERSION-CONTROL.md](./VERSION-CONTROL.md) - Version policy and release process

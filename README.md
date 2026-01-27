@@ -1,5 +1,9 @@
 # IT Dashboard Agent
 
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Local network monitoring agent for the IT Dashboard. Discovers devices on your network and reports their status to the cloud dashboard in real-time.
 
 ## Quick Install
@@ -41,33 +45,34 @@ curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/maste
 - **Firewall-Friendly**: Uses HTTPS outbound connections only (no inbound ports required)
 - **Multi-Segment**: Can monitor multiple network segments from a single agent
 - **Real-time Updates**: Status changes are pushed to dashboard instantly via Supabase Realtime
+- **Ping/Pong** (v2.0.0): Bidirectional connectivity test with sonar sound feedback
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    IT Dashboard Agent                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │   Scanner   │  │   Status    │  │      Agent UI           │ │
-│  │  (ARP/Ping) │  │   Checker   │  │  (Socket.IO + Express)  │ │
-│  └──────┬──────┘  └──────┬──────┘  └────────────┬────────────┘ │
-│         │                │                       │              │
-│         │    ┌───────────┴───────────┐          │              │
-│         └───▶│     Main Loop         │◀─────────┘              │
-│              │  (Heartbeat, Scan,    │                         │
-│              │   Status Check)       │                         │
-│              └───────────┬───────────┘                         │
-│                          │                                      │
-└──────────────────────────┼──────────────────────────────────────┘
-                           │ HTTPS
-                           ▼
-              ┌─────────────────────────┐
-              │   IT Dashboard API      │
-              │   (Vercel + Supabase)   │
-              └─────────────────────────┘
++-----------------------------------------------------------------+
+|                    IT Dashboard Agent                            |
++-------+---------+---------+---------+---------------------------+
+|       |         |         |         |                           |
+| Scanner| Status | Realtime| Agent UI| Main Loop                 |
+| (ARP)  | Checker| Client  | (3001)  | - Heartbeat               |
+|        |        | (WSS)   |         | - Status checks           |
+|        |        |         |         | - Ping/pong               |
++-------+---------+---------+---------+---------------------------+
+         |                 |
+         v                 v
+    +----------+    +---------------+
+    | REST API |    | Supabase      |
+    | (HTTPS)  |    | Realtime(WSS) |
+    +----------+    +---------------+
+         |                 |
+         v                 v
+    +----------------------------------+
+    |   IT Dashboard (Vercel + Supabase)|
+    +----------------------------------+
 ```
+
+For detailed architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status Hysteresis
 
@@ -81,6 +86,24 @@ To prevent status flapping from brief network hiccups, the agent implements a **
 | Device responds after failures | Immediately **online**, count reset |
 
 This ensures a single dropped packet doesn't cause the dashboard to show misleading status changes.
+
+## Ping/Pong Feature (v2.0.0)
+
+Test connectivity with instant audio feedback:
+
+```
+Dashboard                    Supabase                      Agent
+    |--- Click "Ping" -------->|                            |
+    |                          |--- Realtime --------------->|
+    |                          |                             |
+    |                          |                     [Sonar sound]
+    |                          |<-- POST /agent/ping --------|
+    |<-- Realtime -------------|                             |
+    |                          |                             |
+[Sonar sound]                  |                             |
+```
+
+Both sides play a sonar sound and the round-trip latency is displayed.
 
 ## Requirements
 
@@ -164,9 +187,9 @@ Set `ENABLE_AUTO_UPGRADE=true` in `.env` to enable auto-upgrades.
 
 | Upgrade Type | Auto-Upgrade Behavior |
 |--------------|----------------------|
-| Patch (1.0.0 → 1.0.1) | Always allowed |
-| Minor (1.0.0 → 1.1.0) | Allowed if `AUTO_UPGRADE_ON_MINOR=true` |
-| Major (1.0.0 → 2.0.0) | Never automatic (may have breaking changes) |
+| Patch (1.0.0 -> 1.0.1) | Always allowed |
+| Minor (1.0.0 -> 1.1.0) | Allowed if `AUTO_UPGRADE_ON_MINOR=true` |
+| Major (1.0.0 -> 2.0.0) | Never automatic (may have breaking changes) |
 
 See [docs/UPGRADE-MECHANISM.md](docs/UPGRADE-MECHANISM.md) for details.
 
@@ -179,6 +202,7 @@ The agent includes a built-in web interface for local monitoring and debugging.
 ### Features
 
 - **Connection Status**: Shows if agent is connected to dashboard
+- **Version Info**: Current version and update availability
 - **Network Segments**: Lists assigned segments with scan progress
 - **Discovered Devices**: Table showing all discovered devices with:
   - Status (online/offline/degraded) with color indicators
@@ -192,25 +216,25 @@ The agent includes a built-in web interface for local monitoring and debugging.
 ### Screenshot
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  IT Dashboard Agent - Home Office Agent                      │
-│  ● Connected to dashboard                    Last: 10:45:32  │
-├──────────────────────────────────────────────────────────────┤
-│  Segments                                                    │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ HomeOffice (10.117.1.0/24)          [Scan Now]         │ │
-│  │ Progress: ████████████████████ 100%                    │ │
-│  └────────────────────────────────────────────────────────┘ │
-├──────────────────────────────────────────────────────────────┤
-│  Discovered Devices (9)                                      │
-│  ┌──────────┬───────────────┬──────────────┬────────────┐  │
-│  │ Status   │ IP Address    │ Hostname     │ Response   │  │
-│  ├──────────┼───────────────┼──────────────┼────────────┤  │
-│  │ ● Online │ 10.117.1.1    │ router       │ 2ms        │  │
-│  │ ● Online │ 10.117.1.100  │ desktop-pc   │ 5ms        │  │
-│  │ ○ Offline│ 10.117.1.127  │ printer      │ -          │  │
-│  └──────────┴───────────────┴──────────────┴────────────┘  │
-└──────────────────────────────────────────────────────────────┘
++--------------------------------------------------------------+
+|  IT Dashboard Agent - Home Office Agent                       |
+|  * Connected to dashboard                  Version: 2.0.0     |
++--------------------------------------------------------------+
+|  Segments                                                     |
+|  +--------------------------------------------------------+ |
+|  | HomeOffice (10.117.1.0/24)          [Scan Now]          | |
+|  | Progress: #################### 100%                     | |
+|  +--------------------------------------------------------+ |
++--------------------------------------------------------------+
+|  Discovered Devices (9)                                       |
+|  +----------+---------------+--------------+------------+    |
+|  | Status   | IP Address    | Hostname     | Response   |    |
+|  +----------+---------------+--------------+------------+    |
+|  | * Online | 10.117.1.1    | router       | 2ms        |    |
+|  | * Online | 10.117.1.100  | desktop-pc   | 5ms        |    |
+|  | o Offline| 10.117.1.127  | printer      | -          |    |
+|  +----------+---------------+--------------+------------+    |
++--------------------------------------------------------------+
 ```
 
 ## Development
@@ -224,6 +248,9 @@ npm run build
 
 # Run production build
 npm start
+
+# Run tests
+npm test
 ```
 
 ## How It Works
@@ -243,6 +270,7 @@ npm start
 7. **Hysteresis**: Applies consecutive failure threshold before marking offline
 8. **Report**: Stabilized status results uploaded to dashboard
 9. **Realtime**: Dashboard receives update via Supabase Realtime
+10. **Commands**: Agent receives commands (scan, ping, upgrade) via Realtime
 
 ## Running as a Service
 
@@ -310,36 +338,46 @@ Create `~/Library/LaunchAgents/com.itdashboard.agent.plist`:
 
 ```
 src/
-├── index.ts              # Main entry point and orchestration
-├── config.ts             # Configuration loader
-├── api/
-│   ├── client.ts         # Dashboard API client
-│   └── realtime-client.ts# Supabase realtime connection
-├── scanner/
-│   ├── arp.ts            # ARP scanning and device discovery
-│   ├── ping.ts           # ICMP ping checks
-│   ├── tcp.ts            # TCP port checks
-│   └── http.ts           # HTTP/HTTPS checks
-├── upgrade/
-│   └── upgrader.ts       # Auto-upgrade with backup/rollback
-├── ui/
-│   ├── server.ts         # Agent UI server (Express + Socket.IO)
-│   └── public/
-│       └── index.html    # Agent UI frontend
-└── utils/
-    ├── logger.ts         # Winston logger setup
-    └── version.ts        # Centralized version management
++-- index.ts              # Main entry point and orchestration
++-- config.ts             # Configuration loader
++-- api/
+|   +-- client.ts         # Dashboard API client
+|   +-- realtime-client.ts# Supabase realtime connection
++-- scanner/
+|   +-- arp.ts            # ARP scanning and device discovery
+|   +-- ping.ts           # ICMP ping checks
+|   +-- tcp.ts            # TCP port checks
+|   +-- http.ts           # HTTP/HTTPS checks
++-- upgrade/
+|   +-- upgrader.ts       # Auto-upgrade with backup/rollback
++-- ui/
+|   +-- server.ts         # Agent UI server (Express + Socket.IO)
+|   +-- public/
+|       +-- index.html    # Agent UI frontend
++-- utils/
+    +-- logger.ts         # Winston logger setup
+    +-- version.ts        # Centralized version management
 
 docs/
-├── ARCHITECTURE.md           # Full system architecture
-├── E2E-TEST-RESULTS.md       # End-to-end test results
-├── REALTIME-COMMUNICATION.md # Bidirectional realtime guide
-├── VERSION-CONTROL.md        # Version policy and release process
-└── UPGRADE-MECHANISM.md      # How upgrades work
++-- ARCHITECTURE.md           # Full system architecture
++-- E2E-TEST-RESULTS.md       # End-to-end test results
++-- REALTIME-COMMUNICATION.md # Bidirectional realtime guide
++-- VERSION-CONTROL.md        # Version policy and release process
++-- UPGRADE-MECHANISM.md      # How upgrades work
 
 tests/
-└── version.test.ts       # Version utility tests
++-- version.test.ts       # Version utility tests
 ```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full system architecture and component design |
+| [REALTIME-COMMUNICATION.md](docs/REALTIME-COMMUNICATION.md) | WebSocket and Supabase Realtime details |
+| [UPGRADE-MECHANISM.md](docs/UPGRADE-MECHANISM.md) | How automatic upgrades work |
+| [VERSION-CONTROL.md](docs/VERSION-CONTROL.md) | Version policy and release process |
+| [E2E-TEST-RESULTS.md](docs/E2E-TEST-RESULTS.md) | End-to-end test results |
 
 ## Troubleshooting
 
@@ -367,6 +405,11 @@ tests/
 - Check port 3001 is not in use: `netstat -an | grep 3001`
 - Verify firewall allows local connections to 3001
 - Check agent logs for startup errors
+
+### Realtime not working
+- Check logs for "Supabase Realtime connected"
+- Verify firewall allows WebSocket (wss://)
+- See [docs/REALTIME-COMMUNICATION.md](docs/REALTIME-COMMUNICATION.md)
 
 ## Related Projects
 
