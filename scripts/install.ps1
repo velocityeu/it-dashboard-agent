@@ -38,6 +38,7 @@ $BundledNssmPath = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\windows\nss
 # NSSM download URLs (primary + fallbacks)
 $NssmUrls = @(
     "https://nssm.cc/release/nssm-2.24.zip",
+    "https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip",
     "https://web.archive.org/web/20230806122308/https://nssm.cc/release/nssm-2.24.zip"
 )
 $NssmPath = "$InstallPath\nssm.exe"
@@ -197,7 +198,20 @@ function Install-NSSM {
         return $true
     }
 
-    # Check for bundled NSSM first
+    # Check for bundled NSSM in the extracted install directory
+    $bundledInInstall = Join-Path $InstallPath "bin\windows\nssm.exe"
+    if (Test-Path $bundledInInstall) {
+        Write-ColorText "Using bundled NSSM from install directory..." "Cyan"
+        try {
+            Copy-Item -Path $bundledInInstall -Destination $NssmPath -Force
+            Write-Success "NSSM installed from bundled binary"
+            return $true
+        } catch {
+            Write-ColorText "Failed to copy bundled NSSM, will try downloading..." "Yellow"
+        }
+    }
+
+    # Check original bundled path (for local development)
     if (Test-Path $BundledNssmPath) {
         Write-ColorText "Using bundled NSSM..." "Cyan"
         try {
@@ -217,17 +231,25 @@ function Install-NSSM {
     foreach ($url in $NssmUrls) {
         try {
             Write-ColorText "Trying: $url" "Gray"
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 30
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 60
+
+            # Verify the download is a valid ZIP (check file size and magic bytes)
+            $fileInfo = Get-Item $zipPath
+            if ($fileInfo.Length -lt 10000) {
+                throw "Downloaded file too small ($($fileInfo.Length) bytes)"
+            }
+
             $downloaded = $true
             break
         } catch {
-            Write-ColorText "Failed, trying next mirror..." "Yellow"
+            Write-ColorText "Failed: $_" "Yellow"
             Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
         }
     }
 
     if (-not $downloaded) {
         Write-Error2 "Failed to download NSSM from all mirrors"
+        Write-ColorText "You can manually download NSSM from https://nssm.cc and place nssm.exe in: $NssmPath" "Yellow"
         return $false
     }
 
