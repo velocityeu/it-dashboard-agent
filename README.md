@@ -21,7 +21,12 @@ Local network monitoring agent for the IT Dashboard. Discovers devices on your n
 
 **Windows** (PowerShell as Administrator):
 ```powershell
-irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/bootstrap.ps1 | iex
+```
+
+Or download and run directly:
+```powershell
+iwr -Uri "https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/install.ps1" -OutFile "$env:TEMP\install.ps1"; & "$env:TEMP\install.ps1"
 ```
 
 **macOS / Linux**:
