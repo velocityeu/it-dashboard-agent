@@ -331,8 +331,11 @@ src/
     └── version.ts        # Centralized version management
 
 docs/
-├── VERSION-CONTROL.md    # Version policy and release process
-└── UPGRADE-MECHANISM.md  # How upgrades work
+├── ARCHITECTURE.md           # Full system architecture
+├── E2E-TEST-RESULTS.md       # End-to-end test results
+├── REALTIME-COMMUNICATION.md # Bidirectional realtime guide
+├── VERSION-CONTROL.md        # Version policy and release process
+└── UPGRADE-MECHANISM.md      # How upgrades work
 
 tests/
 └── version.test.ts       # Version utility tests
