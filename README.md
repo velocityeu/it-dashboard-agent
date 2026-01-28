@@ -1,20 +1,27 @@
 # IT Dashboard Agent
 
-[![Version](https://img.shields.io/badge/version-3.2.2-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
+[![Version](https://img.shields.io/badge/version-3.2.5-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Local network monitoring agent for the IT Dashboard. Discovers devices on your network and reports their status to the cloud dashboard in real-time.
 
-## What's New in v3.2.2
+## What's New in v3.2.5
 
-- **Realtime Reliability Fixes**: Ping works on first attempt, status updates within 15 seconds
-- **Robust Reconnection**: Socket.IO and Supabase realtime auto-reconnect with exponential backoff
-- **Connection Health Monitoring**: UI shows socket connection status, detects stale connections
-- **Heartbeat Improvements**: Capped at 60s max, retry logic with 2s/5s/10s delays on failure
-- **Memory Leak Fix**: Device statuses cleaned up when segments are removed
+- **Configurable Failure Threshold**: Set `STATUS_FAILURE_THRESHOLD` to customize offline detection (default: 2)
+- **Segment-Aware Device Tracking**: UI accurately tracks which devices belong to which segments
+- **Heartbeat Command Fallback**: Commands delivered via heartbeat when realtime is temporarily down
+- **Improved Connection Health**: Stale threshold increased to 10 minutes, reducing unnecessary reconnects
+- **Device Tracking by ID**: Uses device_id instead of IP for reliable status tracking across IP changes
 
 ### Previous Releases
+
+**v3.2.2:**
+- Realtime Reliability Fixes: Ping works on first attempt, status updates within 15 seconds
+- Robust Reconnection: Socket.IO and Supabase realtime auto-reconnect with exponential backoff
+- Connection Health Monitoring: UI shows socket connection status, detects stale connections
+- Heartbeat Improvements: Capped at 60s max, retry logic with 2s/5s/10s delays on failure
+- Memory Leak Fix: Device statuses cleaned up when segments are removed
 
 **v3.2.0:**
 - Windows Upgrade Orchestrator: PowerShell script handles upgrades externally
@@ -100,6 +107,7 @@ curl -fsSL https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/maste
 - **Firewall-Friendly**: Uses HTTPS outbound connections only (no inbound ports required)
 - **Multi-Segment**: Can monitor multiple network segments from a single agent
 - **Real-time Updates**: Status changes are pushed to dashboard instantly via Supabase Realtime
+- **Command Fallback**: Heartbeat-based command delivery when realtime is unavailable
 - **Ping/Pong**: Bidirectional connectivity test with sonar sound feedback
 - **Log Rotation** (v3.0.0): Daily rotating logs with 7-day retention and compression
 - **Auto-Upgrade**: Safe upgrade mechanism with backup/rollback and retry logic
@@ -221,7 +229,7 @@ Both sides play a sonar sound and the round-trip latency is displayed.
 | `AGENT_NAME` | Display name for this agent | IT Dashboard Agent |
 | `HEARTBEAT_INTERVAL` | Heartbeat frequency (ms) | 60000 |
 | `STATUS_CHECK_INTERVAL` | Status check frequency (ms) | 30000 |
-| `STATUS_FAILURE_THRESHOLD` | Consecutive failures before marking offline | 2 |
+| `STATUS_FAILURE_THRESHOLD` | Consecutive failures before marking offline (configurable) | 2 |
 | `LOG_LEVEL` | Logging level (debug/info/warn/error) | info |
 | `LOG_DIR` | Directory for log files | `./logs` |
 | `ENABLE_AUTO_UPGRADE` | Enable automatic upgrades | false |
@@ -479,9 +487,9 @@ tests/
 - Run agent with elevated privileges if needed
 
 ### Status flapping
-- The agent has built-in hysteresis (2 consecutive failures)
-- If still flapping, check network stability
-- Increase `STATUS_CHECK_INTERVAL` for slower checks
+- The agent has built-in hysteresis (configurable via `STATUS_FAILURE_THRESHOLD`, default: 2)
+- If still flapping, increase `STATUS_FAILURE_THRESHOLD` to require more consecutive failures
+- Check network stability and increase `STATUS_CHECK_INTERVAL` for slower checks
 
 ### Agent UI not accessible
 - Check port 3001 is not in use: `netstat -an | grep 3001`
@@ -491,6 +499,7 @@ tests/
 ### Realtime not working
 - Check logs for "Supabase Realtime connected"
 - Verify firewall allows WebSocket (wss://)
+- Commands still delivered via heartbeat fallback (every 60s)
 - See [docs/REALTIME-COMMUNICATION.md](docs/REALTIME-COMMUNICATION.md)
 
 ## Related Projects

@@ -1,6 +1,6 @@
 # IT Dashboard Agent Architecture
 
-**Version:** 3.2.0
+**Version:** 3.2.5
 
 This document describes the complete architecture of the IT Dashboard Agent, including technology choices, component design, and communication patterns with the cloud dashboard.
 
@@ -149,11 +149,13 @@ Checks device availability using multiple protocols.
 | `tcp` | `tcp.ts` | Service-specific port checks |
 | `http` | `http.ts` | Web services, APIs, management interfaces |
 
-**Status Hysteresis:**
+**Status Hysteresis (v3.2.5+):**
 Prevents status flapping from transient network issues:
+- Configurable via `STATUS_FAILURE_THRESHOLD` environment variable (default: 2)
 - 1st failure: Device stays online (grace period)
-- 2nd consecutive failure: Device marked offline
+- Nth consecutive failure: Device marked offline (where N = threshold)
 - Recovery: Immediately online, counter reset
+- Device tracking uses `device_id` (not IP address) for reliable tracking across IP changes
 
 ### Realtime Client (`src/api/realtime-client.ts`)
 
@@ -165,6 +167,13 @@ Manages WebSocket connection to Supabase Realtime.
 3. Subscribe to commands channel
 4. Handle connection state changes
 5. Reconnect automatically on disconnect
+6. Track connection health with stale detection
+
+**Connection Health (v3.2.4+):**
+- Stale threshold: 10 minutes (increased from 2 minutes)
+- Tracks last message timestamp for staleness detection
+- `isHealthy()` method for connection quality checks
+- Reduced unnecessary reconnects during quiet periods
 
 See [REALTIME-COMMUNICATION.md](./REALTIME-COMMUNICATION.md) for details.
 
@@ -176,12 +185,13 @@ Local web interface for monitoring and debugging.
 http://localhost:3001
 +--------------------------------------------------+
 |  IT Dashboard Agent - Office Agent               |
-|  * Connected to dashboard          Version: 3.2.0|
+|  * Connected to dashboard          Version: 3.2.5|
 +--------------------------------------------------+
 |  Segments                                        |
 |  +--------------------------------------------+ |
 |  | Office LAN (192.168.1.0/24)    [Scan Now]  | |
 |  | Progress: #################### 100%        | |
+|  | Devices: 12                                | |
 |  +--------------------------------------------+ |
 +--------------------------------------------------+
 |  Discovered Devices (12)                         |
@@ -194,6 +204,11 @@ http://localhost:3001
 |  +--------+---------------+----------+---------+ |
 +--------------------------------------------------+
 ```
+
+**Segment-Aware Device Tracking (v3.2.5+):**
+- UI tracks which segment each device belongs to
+- Per-segment device counts displayed accurately
+- Device cleanup only removes devices from removed segments (not all)
 
 **Why Express + Socket.IO?**
 - Minimal footprint for local-only server
@@ -480,13 +495,46 @@ AUTO_UPGRADE_ON_MINOR=true
 
 ---
 
+## Command Delivery Reliability
+
+Commands are delivered to the agent through two mechanisms:
+
+### Primary: Supabase Realtime (Instant)
+- Commands pushed via WebSocket in ~100-300ms
+- Subscribed to `agent:{agentId}:commands` channel
+- Requires active WebSocket connection
+
+### Fallback: Heartbeat Polling (v3.2.4+)
+- Heartbeat response includes `pending_commands` array
+- Agent processes pending commands when realtime is disconnected
+- Ensures commands are delivered even during temporary realtime outages
+- Heartbeat interval: 60 seconds
+
+```
+Dashboard                    Supabase                      Agent
+    |                           |                            |
+    | INSERT command            |                            |
+    |-------------------------->|                            |
+    |                           |                            |
+    |                           | (Realtime down)            |
+    |                           |                            |
+    |                           |      POST /heartbeat       |
+    |                           |<---------------------------|
+    |                           |                            |
+    |                           | Response with              |
+    |                           | pending_commands: [...]    |
+    |                           |--------------------------->|
+    |                           |                            |
+    |                           |                   Execute commands
+```
+
 ## Fallback Mode
 
 If Supabase Realtime is unavailable or disabled (`ENABLE_REALTIME=false`):
 - Agent relies on heartbeat polling (60s interval)
-- Commands received on next heartbeat
+- Commands received via `pending_commands` in heartbeat response
 - Segment changes received on next heartbeat
-- Higher latency but still functional
+- Higher latency but still fully functional
 
 ---
 

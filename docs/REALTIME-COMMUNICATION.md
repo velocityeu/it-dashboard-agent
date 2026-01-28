@@ -1,6 +1,6 @@
 # Realtime Communication
 
-**Version:** 3.2.0
+**Version:** 3.2.5
 
 This document explains how bidirectional realtime communication works between the IT Dashboard Agent and the cloud dashboard, including the rationale for choosing Supabase Realtime over alternatives.
 
@@ -489,6 +489,21 @@ this.supabase.realtime.on('CONNECTION_STATE_CHANGE', (state) => {
 | 3 | 4s | Backoff |
 | 4+ | 8s max | Capped backoff |
 
+### Connection Health Monitoring (v3.2.4+)
+
+The realtime client tracks connection health to detect stale connections:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **Stale Threshold** | 10 minutes | Time without messages before connection considered stale |
+| **Health Check** | `isHealthy()` | Method to check connection quality |
+| **Reconnect Trigger** | Stale detection | Forces reconnect when connection appears stale |
+
+**Why 10 minutes?** (Increased from 2 minutes in v3.2.4)
+- Reduces unnecessary reconnects during quiet periods
+- Most deployments don't have constant command traffic
+- WebSocket keep-alive handles actual connection failures
+
 ### Fallback to Polling
 
 When Realtime is unavailable:
@@ -514,6 +529,60 @@ if (!realtimeClient?.connected) {
   }
 }
 ```
+
+---
+
+## Command Fallback Mechanism (v3.2.4+)
+
+When Supabase Realtime is temporarily unavailable, commands are still delivered reliably via the heartbeat fallback mechanism.
+
+### How It Works
+
+1. Dashboard inserts command into `agent_commands` table
+2. If Realtime is connected: Command pushed instantly via WebSocket
+3. If Realtime is down: Command included in next heartbeat response as `pending_commands`
+4. Agent processes commands from either source
+
+### Heartbeat Response with Commands
+
+```typescript
+// Dashboard API response
+{
+  "success": true,
+  "agent_id": "uuid",
+  "segments": [...],
+  "pending_commands": [
+    {
+      "id": "command-uuid",
+      "command_type": "scan_now",
+      "payload": {},
+      "status": "pending",
+      "created_at": "2026-01-28T12:00:00Z"
+    }
+  ]
+}
+```
+
+### Agent Processing Logic
+
+```typescript
+// src/index.ts - heartbeat handler
+const response = await apiClient.heartbeat()
+
+// Process commands from heartbeat if realtime is not connected
+if (response.pending_commands && !realtimeClient?.connected) {
+  for (const cmd of response.pending_commands) {
+    await handleCommand(cmd)
+  }
+}
+```
+
+### Benefits
+
+- **Reliable Delivery**: Commands always delivered within 60 seconds maximum
+- **No Lost Commands**: Pending commands queued until acknowledged
+- **Transparent**: Same command handling regardless of delivery mechanism
+- **Automatic**: No configuration needed, fallback is automatic
 
 ---
 
@@ -631,6 +700,8 @@ Check `http://localhost:3001/api/status`:
 2. Check `agent_id` in command matches agent
 3. Verify RLS policies allow SELECT on `agent_commands`
 4. Check Supabase replication is enabled for `agent_commands` table
+5. If realtime is down, commands should arrive via heartbeat (check every 60s)
+6. Verify dashboard includes `pending_commands` in heartbeat response
 
 #### Segment Changes Not Received
 
