@@ -55,6 +55,7 @@ export class AgentUI {
   private io: SocketServer
   private logger: Logger
   private state: AgentState
+  private deviceSegments: Map<string, string> = new Map()
   private scanCallbacks: Map<string, () => Promise<void>> = new Map()
   private pingDashboardCallback: (() => Promise<void>) | null = null
 
@@ -280,23 +281,19 @@ export class AgentUI {
    * This prevents stale data and memory leaks
    */
   private cleanupDeviceStatuses(removedSegmentIds: string[]): void {
-    // Get the CIDRs of removed segments (we need to track which devices belonged to them)
-    // For now, we'll clean up all device statuses when segments are removed
-    // since we don't track which device belongs to which segment in the UI state
+    const removedSegments = new Set(removedSegmentIds)
     const devicesInRemovedSegments = new Set<string>()
 
-    // Check if any discovered devices no longer belong to any active segment
-    // This is a simplified approach - remove all devices whose segments are gone
-    for (const [ip, device] of this.state.discoveredDevices) {
-      // If we have segment tracking per device, we could be more precise
-      // For now, just log and let the next scan repopulate
-      devicesInRemovedSegments.add(ip)
+    for (const [ip, segmentId] of this.deviceSegments) {
+      if (removedSegments.has(segmentId)) {
+        devicesInRemovedSegments.add(ip)
+      }
     }
 
-    // Remove device statuses for devices in removed segments
     let cleanedCount = 0
     for (const ip of devicesInRemovedSegments) {
-      if (this.state.deviceStatuses.has(ip)) {
+      this.deviceSegments.delete(ip)
+      if (this.state.deviceStatuses.has(ip) || this.state.discoveredDevices.has(ip)) {
         this.state.deviceStatuses.delete(ip)
         this.state.discoveredDevices.delete(ip)
         cleanedCount++
@@ -336,16 +333,34 @@ export class AgentUI {
     }
   }
 
-  updateDevices(devices: DiscoveredDevice[]) {
+  updateDevices(devices: DiscoveredDevice[], segmentId?: string) {
+    if (segmentId) {
+      const latestIps = new Set(devices.map((device) => device.ip_address))
+      for (const [ip, assignedSegmentId] of this.deviceSegments) {
+        if (assignedSegmentId === segmentId && !latestIps.has(ip)) {
+          this.deviceSegments.delete(ip)
+          this.state.discoveredDevices.delete(ip)
+          this.state.deviceStatuses.delete(ip)
+        }
+      }
+    }
+
     for (const device of devices) {
       this.state.discoveredDevices.set(device.ip_address, device)
+      if (segmentId) {
+        this.deviceSegments.set(device.ip_address, segmentId)
+      }
     }
 
     // Update segment device counts
     for (const [, state] of this.state.segments) {
-      state.deviceCount = devices.filter(
-        (d) => d.ip_address // Count all devices for now
-      ).length
+      let count = 0
+      for (const [ip, assignedSegmentId] of this.deviceSegments) {
+        if (assignedSegmentId === state.segment.id && this.state.discoveredDevices.has(ip)) {
+          count++
+        }
+      }
+      state.deviceCount = count
     }
 
     this.io.emit('devices', Array.from(this.state.discoveredDevices.values()))

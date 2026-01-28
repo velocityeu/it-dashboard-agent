@@ -70,6 +70,7 @@ oui-data@1.1.516      - MAC vendor database (~5MB)
 | `AGENT_NAME` | No | Display name for this agent |
 | `HEARTBEAT_INTERVAL` | No | Heartbeat frequency (default: 60s) |
 | `STATUS_CHECK_INTERVAL` | No | Status check frequency (default: 30s) |
+| `STATUS_FAILURE_THRESHOLD` | No | Consecutive failures before offline (default: 2) |
 | `LOG_LEVEL` | No | Logging verbosity (default: info) |
 
 ### 1.4 Current Deployment Method

@@ -90,8 +90,6 @@ async function ensureUpgradeScript(installPath: string): Promise<string> {
 }
 
 // Track consecutive failures for status hysteresis
-// Device only goes offline after FAILURE_THRESHOLD consecutive failures
-const FAILURE_THRESHOLD = 2
 const deviceFailureCounts = new Map<string, number>()
 const lastKnownStatus = new Map<string, 'online' | 'offline' | 'degraded' | 'unknown'>()
 
@@ -696,7 +694,7 @@ async function main() {
         ui.addLog('info', `Found ${devices.length} devices in ${segment.name}`)
 
         // Update UI with discovered devices
-        ui.updateDevices(devices)
+        ui.updateDevices(devices, segment.id)
 
         // Upload to dashboard
         const result = await client.uploadDiscoveredDevices(segment.id, devices)
@@ -813,8 +811,9 @@ async function main() {
 
       await Promise.all(workers)
 
+      const failureThreshold = config.statusFailureThreshold
       // Apply status hysteresis to prevent rapid flapping
-      // Device only goes offline after FAILURE_THRESHOLD consecutive failures
+      // Device only goes offline after failureThreshold consecutive failures
       const stabilizedReports = reports.map(report => {
         // Use device_id when available (more reliable), fall back to IP for discovered devices
         const deviceKey = report.device_id || `discovered:${report.ip_address}`
@@ -832,9 +831,9 @@ async function main() {
 
           const previousStatus = lastKnownStatus.get(deviceKey)
 
-          if (currentFailures < FAILURE_THRESHOLD && previousStatus === 'online') {
+          if (currentFailures < failureThreshold && previousStatus === 'online') {
             // Not enough consecutive failures - keep as online
-            logger.debug(`Device ${report.ip_address}: ${rawStatus} (failure ${currentFailures}/${FAILURE_THRESHOLD}, keeping online)`)
+            logger.debug(`Device ${report.ip_address}: ${rawStatus} (failure ${currentFailures}/${failureThreshold}, keeping online)`)
             return { ...report, status: 'online' as const }
           } else {
             // Enough failures - accept offline status

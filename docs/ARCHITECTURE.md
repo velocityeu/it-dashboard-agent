@@ -427,6 +427,7 @@ AGENT_API_KEY=agt_xxxxx
 AGENT_NAME=My Agent
 HEARTBEAT_INTERVAL=60      # seconds
 STATUS_CHECK_INTERVAL=30   # seconds
+STATUS_FAILURE_THRESHOLD=2 # consecutive failures before offline
 LOG_LEVEL=info            # debug, info, warn, error
 ENABLE_REALTIME=true      # Enable Supabase Realtime
 ENABLE_AUTO_SCAN=true     # Auto-detect local network
