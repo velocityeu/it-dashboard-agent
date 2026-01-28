@@ -1,4 +1,7 @@
 import os from 'os'
+import { spawn } from 'child_process'
+import { join } from 'path'
+import { existsSync } from 'fs'
 import { loadConfig } from './config.js'
 import { createLogger } from './utils/logger.js'
 import { VERSION, shouldAutoUpgrade } from './utils/version.js'
@@ -272,6 +275,57 @@ async function main() {
               'https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip'
 
             logger.info(`[COMMAND:upgrade] Download URL: ${downloadUrl}`)
+
+            // On Windows, use external PowerShell script to handle upgrade
+            // This avoids file lock issues since the agent can't replace itself while running
+            if (process.platform === 'win32') {
+              const installPath = getInstallPath()
+              const scriptPath = join(installPath, 'scripts', 'upgrade-service.ps1')
+
+              if (!existsSync(scriptPath)) {
+                throw new Error(`Upgrade script not found at: ${scriptPath}`)
+              }
+
+              logger.info(`[COMMAND:upgrade] Using external PowerShell upgrade script: ${scriptPath}`)
+              ui.addLog('info', 'Spawning upgrade process...')
+
+              // Acknowledge command before exiting - upgrade will happen externally
+              await client.acknowledgeCommand(command.id, 'completed', 'Upgrade process started externally')
+
+              // Spawn the PowerShell script as a detached process
+              // This allows it to continue running after we exit
+              const psArgs = [
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', scriptPath,
+                '-DownloadUrl', downloadUrl,
+                '-InstallPath', installPath,
+                '-TargetVersion', targetVersion || 'latest'
+              ]
+
+              logger.info(`[COMMAND:upgrade] Spawning: powershell ${psArgs.join(' ')}`)
+
+              const child = spawn('powershell', psArgs, {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: true
+              })
+
+              child.unref()
+
+              logger.info(`[COMMAND:upgrade] Upgrade process spawned (PID: ${child.pid}). Agent will now exit for upgrade.`)
+              ui.addLog('info', 'Upgrade started. Agent exiting...')
+
+              // Give a moment for logs to flush, then exit
+              // NSSM will not restart immediately because upgrade script stops the service
+              setTimeout(() => {
+                process.exit(0)
+              }, 1000)
+
+              return // Don't acknowledge again below
+            }
+
+            // Non-Windows: use the built-in upgrader (original behavior)
             const upgrader = new AgentUpgrader(getInstallPath(), downloadUrl, logger)
             const result = await upgrader.upgrade()
 
@@ -316,6 +370,46 @@ async function main() {
    */
   async function performAutoUpgrade(downloadUrl: string, newVersion: string): Promise<void> {
     try {
+      // On Windows, use external PowerShell script to handle upgrade
+      if (process.platform === 'win32') {
+        const installPath = getInstallPath()
+        const scriptPath = join(installPath, 'scripts', 'upgrade-service.ps1')
+
+        if (!existsSync(scriptPath)) {
+          throw new Error(`Upgrade script not found at: ${scriptPath}`)
+        }
+
+        logger.info(`[AUTO-UPGRADE] Using external PowerShell upgrade script`)
+        ui.addLog('info', 'Spawning auto-upgrade process...')
+
+        const psArgs = [
+          '-NoProfile',
+          '-ExecutionPolicy', 'Bypass',
+          '-File', scriptPath,
+          '-DownloadUrl', downloadUrl,
+          '-InstallPath', installPath,
+          '-TargetVersion', newVersion
+        ]
+
+        const child = spawn('powershell', psArgs, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        })
+
+        child.unref()
+
+        logger.info(`[AUTO-UPGRADE] Upgrade process spawned (PID: ${child.pid}). Agent will now exit.`)
+        ui.addLog('info', 'Auto-upgrade started. Agent exiting...')
+
+        setTimeout(() => {
+          process.exit(0)
+        }, 1000)
+
+        return
+      }
+
+      // Non-Windows: use the built-in upgrader
       const upgrader = new AgentUpgrader(getInstallPath(), downloadUrl, logger)
       const result = await upgrader.upgrade()
 

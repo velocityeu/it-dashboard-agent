@@ -26,12 +26,13 @@ param(
 )
 
 $script:OfflineMode = $Offline
+$script:InstallMode = $null  # Will be set to 'Upgrade', 'Fresh', 'Reconfigure', or 'NewInstall'
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 # Version and constants
-$Version = "3.0.0"
+$Version = "3.2.0"
 $ZipUrl = "https://github.com/velocityeu/it-dashboard-agent/archive/refs/heads/master.zip"
 # Bundled NSSM path (check first before downloading)
 $BundledNssmPath = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\windows\nssm.exe"
@@ -741,23 +742,27 @@ function Test-Prerequisites {
         Write-ColorText "  [?] Could not check disk space" "Yellow"
     }
 
-    # Check port 3001 availability
-    try {
-        $portInUse = Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue
-        if ($portInUse) {
-            $process = Get-Process -Id $portInUse.OwningProcess -ErrorAction SilentlyContinue
-            $processName = if ($process) { $process.ProcessName } else { "Unknown" }
-            # Check if it's our own service
-            if ($processName -ne "node" -or -not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-                $issues += "Port 3001 is in use by: $processName (PID: $($portInUse.OwningProcess))"
+    # Check port 3001 availability (skip in upgrade mode - service will be stopped)
+    if ($script:InstallMode -eq 'Upgrade') {
+        Write-ColorText "  [OK] Port 3001 (skipped - upgrade mode)" "Green"
+    } else {
+        try {
+            $portInUse = Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue
+            if ($portInUse) {
+                $process = Get-Process -Id $portInUse.OwningProcess -ErrorAction SilentlyContinue
+                $processName = if ($process) { $process.ProcessName } else { "Unknown" }
+                # Check if it's our own service
+                if ($processName -ne "node" -or -not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+                    $issues += "Port 3001 is in use by: $processName (PID: $($portInUse.OwningProcess))"
+                } else {
+                    Write-ColorText "  [OK] Port 3001 (used by existing agent)" "Green"
+                }
             } else {
-                Write-ColorText "  [OK] Port 3001 (used by existing agent)" "Green"
+                Write-ColorText "  [OK] Port 3001 available" "Green"
             }
-        } else {
-            Write-ColorText "  [OK] Port 3001 available" "Green"
+        } catch {
+            Write-ColorText "  [?] Could not check port 3001" "Yellow"
         }
-    } catch {
-        Write-ColorText "  [?] Could not check port 3001" "Yellow"
     }
 
     # Check internet connectivity (unless offline mode)
@@ -822,19 +827,14 @@ function Main {
     Write-Banner
     Request-Elevation
 
-    # Run prerequisite checks before anything else
-    if (-not (Test-Prerequisites)) {
-        Write-ColorText "Please resolve the issues above and try again." "Yellow"
-        return
-    }
-
     $totalSteps = 7
     $currentStep = 0
 
-    # Check for existing installation
-    $installMode = Test-ExistingInstall
+    # Check for existing installation FIRST to determine install mode
+    # This is needed so we can skip port check in upgrade mode
+    $script:InstallMode = Test-ExistingInstall
 
-    switch ($installMode) {
+    switch ($script:InstallMode) {
         'Cancel' {
             Write-ColorText "Installation cancelled." "Yellow"
             return
@@ -850,10 +850,33 @@ function Main {
             return
         }
         'Fresh' {
+            # Run prerequisites before removing existing install
+            if (-not (Test-Prerequisites)) {
+                Write-ColorText "Please resolve the issues above and try again." "Yellow"
+                return
+            }
             Remove-ExistingInstall
         }
         'Upgrade' {
-            # Will re-download ZIP instead of fresh install
+            # Stop service FIRST to release file locks and free port 3001
+            Write-ColorText "`nPreparing for upgrade..." "Cyan"
+            Stop-ExistingService
+            Start-Sleep -Seconds 2
+
+            # Now run prerequisites (port check will be skipped)
+            if (-not (Test-Prerequisites)) {
+                Write-ColorText "Please resolve the issues above and try again." "Yellow"
+                # Try to restart service if prerequisites fail
+                Start-AgentService
+                return
+            }
+        }
+        'NewInstall' {
+            # Run prerequisite checks for new install
+            if (-not (Test-Prerequisites)) {
+                Write-ColorText "Please resolve the issues above and try again." "Yellow"
+                return
+            }
         }
     }
 
