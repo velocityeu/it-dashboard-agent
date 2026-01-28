@@ -23,6 +23,8 @@ export interface HeartbeatResponse {
   latest_agent_version?: string
   agent_download_url?: string
   upgrade_available?: boolean
+  // Pending commands (fallback when realtime is down)
+  pending_commands?: AgentCommand[]
 }
 
 export interface AutoSegmentRequest {

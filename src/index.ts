@@ -546,6 +546,23 @@ async function main() {
       // Update UI with version info
       ui.updateVersionInfo(VERSION, response.latest_agent_version, response.upgrade_available)
 
+      // Process pending commands from heartbeat (fallback when realtime is down)
+      if (response.pending_commands && response.pending_commands.length > 0) {
+        const realtimeHealthy = realtimeClient?.connected ?? false
+        if (!realtimeHealthy) {
+          logger.info(`[Heartbeat] Processing ${response.pending_commands.length} pending commands (realtime disconnected)`)
+          ui.addLog('info', `Processing ${response.pending_commands.length} pending commands`)
+          for (const command of response.pending_commands) {
+            // Process each command (handleCommand will acknowledge it)
+            handleCommand(command).catch(err => {
+              logger.error(`[Heartbeat] Failed to process command ${command.id}: ${err}`)
+            })
+          }
+        } else {
+          logger.debug(`[Heartbeat] ${response.pending_commands.length} pending commands (skipping - realtime connected)`)
+        }
+      }
+
       // Check for auto-upgrade
       if (response.upgrade_available && config.enableAutoUpgrade && response.agent_download_url) {
         const latestVersion = response.latest_agent_version || '0.0.0'
@@ -799,7 +816,8 @@ async function main() {
       // Apply status hysteresis to prevent rapid flapping
       // Device only goes offline after FAILURE_THRESHOLD consecutive failures
       const stabilizedReports = reports.map(report => {
-        const deviceKey = report.ip_address // Use ip_address as key (always present)
+        // Use device_id when available (more reliable), fall back to IP for discovered devices
+        const deviceKey = report.device_id || `discovered:${report.ip_address}`
         const rawStatus = report.status
 
         if (rawStatus === 'online') {

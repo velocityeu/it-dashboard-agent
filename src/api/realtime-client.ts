@@ -49,7 +49,7 @@ export class RealtimeClient {
   private static readonly INITIAL_RECONNECT_DELAY = 1000 // 1 second
   private static readonly MAX_RECONNECT_DELAY = 30000 // 30 seconds
   private static readonly HEALTH_CHECK_INTERVAL = 30000 // 30 seconds
-  private static readonly STALE_THRESHOLD = 120000 // 2 minutes without message
+  private static readonly STALE_THRESHOLD = 600000 // 10 minutes without message (increased to reduce reconnects during quiet periods)
 
   // Callbacks
   private onSegmentChange: SegmentChangeCallback | null = null
