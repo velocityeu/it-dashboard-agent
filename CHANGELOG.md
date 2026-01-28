@@ -5,6 +5,25 @@ All notable changes to the IT Dashboard Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.4] - 2026-01-28
+
+### Added
+- **Heartbeat Command Fallback**: Pending commands now included in heartbeat response as backup delivery when realtime is down
+- Agent processes pending commands from heartbeat when realtime is disconnected
+
+### Changed
+- **Stale Connection Threshold**: Increased from 2 minutes to 10 minutes to reduce unnecessary reconnects during quiet periods
+- **Device Tracking Key**: Now uses `device_id` instead of IP address for more accurate status tracking across IP changes
+
+### Fixed
+- Commands not delivered when Supabase Realtime temporarily disconnects
+- Device status tracking issues when devices change IP addresses
+
+## [3.2.3] - 2026-01-28
+
+### Fixed
+- Auto-download upgrade script if missing on older installations
+
 ## [3.2.2] - 2026-01-28
 
 ### Changed
