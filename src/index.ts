@@ -8,12 +8,12 @@ import { createLogger } from './utils/logger.js'
 import { VERSION, shouldAutoUpgrade } from './utils/version.js'
 import { DashboardClient, type NetworkSegment, type DeviceToMonitor, type StatusReport, type AgentCommand, type HeartbeatResponse } from './api/client.js'
 import { RealtimeClient, type SegmentChangePayload } from './api/realtime-client.js'
-import { discoverDevices, type DiscoveredDevice } from './scanner/discover.js'
+import { discoverDevices } from './scanner/discover.js'
 import { pingHost } from './scanner/ping.js'
 import { checkTcpPort } from './scanner/tcp.js'
 import { checkHttp } from './scanner/http.js'
 import { AgentUI } from './ui/server.js'
-import { getPrimaryLocalNetwork, generateAutoSegmentName, type LocalNetwork } from './utils/network-detect.js'
+import { getPrimaryLocalNetwork, generateAutoSegmentName } from './utils/network-detect.js'
 import { AgentUpgrader, getInstallPath } from './upgrade/upgrader.js'
 
 interface SegmentState {
@@ -44,25 +44,12 @@ async function ensureUpgradeScript(installPath: string): Promise<string> {
   // Download from GitHub raw
   const scriptUrl = 'https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/upgrade-service.ps1'
 
-  return new Promise((resolve, reject) => {
-    https.get(scriptUrl, (response) => {
+  const downloadScript = (url: string): Promise<string> => new Promise((resolve, reject) => {
+    const request = https.get(url, (response) => {
       if (response.statusCode === 302 || response.statusCode === 301) {
-        // Follow redirect
         const redirectUrl = response.headers.location
         if (redirectUrl) {
-          https.get(redirectUrl, (redirectResponse) => {
-            let data = ''
-            redirectResponse.on('data', (chunk) => { data += chunk })
-            redirectResponse.on('end', () => {
-              try {
-                writeFileSync(scriptPath, data, 'utf8')
-                console.log(`Upgrade script downloaded to ${scriptPath}`)
-                resolve(scriptPath)
-              } catch (err) {
-                reject(new Error(`Failed to write upgrade script: ${err}`))
-              }
-            })
-          }).on('error', reject)
+          downloadScript(redirectUrl).then(resolve).catch(reject)
         } else {
           reject(new Error('Redirect without location header'))
         }
@@ -85,8 +72,15 @@ async function ensureUpgradeScript(installPath: string): Promise<string> {
           reject(new Error(`Failed to write upgrade script: ${err}`))
         }
       })
-    }).on('error', reject)
+    })
+
+    request.on('error', reject)
+    request.setTimeout(60000, () => {
+      request.destroy(new Error('Download timeout'))
+    })
   })
+
+  return downloadScript(scriptUrl)
 }
 
 // Track consecutive failures for status hysteresis
@@ -94,19 +88,35 @@ const deviceFailureCounts = new Map<string, number>()
 const lastKnownStatus = new Map<string, 'online' | 'offline' | 'degraded' | 'unknown'>()
 
 /**
+ * Prune device tracking maps to only active devices
+ * This prevents memory leaks without resetting all hysteresis state
+ */
+function pruneDeviceTracking(activeKeys: Set<string>, logger: ReturnType<typeof createLogger>): void {
+  let removedCount = 0
+  for (const key of deviceFailureCounts.keys()) {
+    if (!activeKeys.has(key)) {
+      deviceFailureCounts.delete(key)
+      lastKnownStatus.delete(key)
+      removedCount++
+    }
+  }
+
+  if (removedCount > 0) {
+    logger.debug(`Pruned ${removedCount} device tracking entries`)
+  }
+}
+
+/**
  * Clean up device tracking maps to prevent memory leaks
  * Called when segments are removed
  */
-function cleanupDeviceTracking(): void {
-  // Get all IPs that are currently being monitored
-  // For simplicity, we clear all tracking - next status check will repopulate
-  // This is safe because the maps only affect status hysteresis
+function cleanupDeviceTracking(logger: ReturnType<typeof createLogger>): void {
   const previousSize = deviceFailureCounts.size
   deviceFailureCounts.clear()
   lastKnownStatus.clear()
 
   if (previousSize > 0) {
-    console.log(`Cleaned up device tracking (${previousSize} entries)`)
+    logger.debug(`Cleaned up device tracking (${previousSize} entries)`)
   }
 }
 
@@ -134,9 +144,6 @@ async function main() {
 
   // Track segment scan states
   const segmentStates = new Map<string, SegmentState>()
-
-  // Track all discovered devices for UI
-  const allDiscoveredDevices: DiscoveredDevice[] = []
 
   // Realtime client and agent state
   let realtimeClient: RealtimeClient | null = null
@@ -305,6 +312,13 @@ async function main() {
     logger.info(`[COMMAND] Received '${command.command_type}' (id: ${command.id}) - executing`)
     ui.addLog('info', `Command: ${command.command_type}`)
 
+    let acknowledged = false
+    const acknowledge = async (status: 'completed' | 'failed', error?: string) => {
+      if (acknowledged) return
+      await client.acknowledgeCommand(command.id, status, error)
+      acknowledged = true
+    }
+
     try {
       switch (command.command_type) {
         case 'scan_now':
@@ -342,7 +356,7 @@ async function main() {
           // Agent restart request
           logger.info('[COMMAND:restart] Restart requested - shutting down for service manager restart')
           ui.addLog('warn', 'Restarting agent...')
-          await client.acknowledgeCommand(command.id, 'completed')
+          await acknowledge('completed')
           process.exit(0) // Exit for process manager to restart
           break
 
@@ -371,7 +385,7 @@ async function main() {
               ui.addLog('info', 'Spawning upgrade process...')
 
               // Acknowledge command before exiting - upgrade will happen externally
-              await client.acknowledgeCommand(command.id, 'completed', 'Upgrade process started externally')
+              await acknowledge('completed', 'Upgrade process started externally')
 
               // Spawn the PowerShell script as a detached process
               // This allows it to continue running after we exit
@@ -413,7 +427,7 @@ async function main() {
             if (result.success) {
               logger.info(`[COMMAND:upgrade] Upgrade successful: v${result.previousVersion} -> v${result.newVersion}`)
               ui.addLog('info', `Upgraded to v${result.newVersion}`)
-              await client.acknowledgeCommand(command.id, 'completed')
+              await acknowledge('completed')
               // Exit so service manager restarts with new version
               process.exit(0)
             } else {
@@ -423,7 +437,7 @@ async function main() {
             const errorMsg = upgradeError instanceof Error ? upgradeError.message : String(upgradeError)
             logger.error(`[COMMAND:upgrade] Upgrade failed: ${errorMsg}`)
             ui.addLog('error', `Upgrade failed: ${errorMsg}`)
-            await client.acknowledgeCommand(command.id, 'failed', errorMsg)
+            await acknowledge('failed', errorMsg)
           }
           break
 
@@ -438,11 +452,11 @@ async function main() {
           logger.warn(`[COMMAND] Unknown command type: '${command.command_type}' - ignoring`)
       }
 
-      await client.acknowledgeCommand(command.id, 'completed')
+      await acknowledge('completed')
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error)
       logger.error(`[COMMAND:${command.command_type}] Execution failed: ${errorMsg}`)
-      await client.acknowledgeCommand(command.id, 'failed', errorMsg)
+      await acknowledge('failed', errorMsg)
     }
   }
 
@@ -632,7 +646,7 @@ async function main() {
 
       // Clean up device tracking for removed segments
       if (removedSegmentIds.length > 0) {
-        cleanupDeviceTracking()
+        cleanupDeviceTracking(logger)
       }
 
       return segments
@@ -786,10 +800,21 @@ async function main() {
 
       if (devices.length === 0) {
         logger.debug('No devices to monitor')
+        pruneDeviceTracking(new Set(), logger)
         return
       }
 
       logger.info(`Checking status of ${devices.length} devices`)
+
+      const activeDeviceKeys = new Set<string>()
+      for (const device of devices) {
+        if (device.id) {
+          activeDeviceKeys.add(device.id)
+        } else if (device.ip_address) {
+          activeDeviceKeys.add(`discovered:${device.ip_address}`)
+        }
+      }
+      pruneDeviceTracking(activeDeviceKeys, logger)
 
       const reports: StatusReport[] = []
 
