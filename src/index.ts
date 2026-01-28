@@ -27,6 +27,23 @@ const FAILURE_THRESHOLD = 2
 const deviceFailureCounts = new Map<string, number>()
 const lastKnownStatus = new Map<string, 'online' | 'offline' | 'degraded' | 'unknown'>()
 
+/**
+ * Clean up device tracking maps to prevent memory leaks
+ * Called when segments are removed
+ */
+function cleanupDeviceTracking(): void {
+  // Get all IPs that are currently being monitored
+  // For simplicity, we clear all tracking - next status check will repopulate
+  // This is safe because the maps only affect status hysteresis
+  const previousSize = deviceFailureCounts.size
+  deviceFailureCounts.clear()
+  lastKnownStatus.clear()
+
+  if (previousSize > 0) {
+    console.log(`Cleaned up device tracking (${previousSize} entries)`)
+  }
+}
+
 async function main() {
   console.log(`
 ╔════════════════════════════════════════════╗
@@ -523,13 +540,20 @@ async function main() {
       }
 
       // Remove segments no longer assigned (unless it's our auto-registered one)
+      const removedSegmentIds: string[] = []
       for (const [id] of segmentStates) {
         const stillAssigned = segments.find(s => s.id === id)
         const isOurAutoSegment = autoRegisteredSegment?.id === id
         if (!stillAssigned && !isOurAutoSegment) {
           segmentStates.delete(id)
+          removedSegmentIds.push(id)
           logger.info(`Segment removed: ${id}`)
         }
+      }
+
+      // Clean up device tracking for removed segments
+      if (removedSegmentIds.length > 0) {
+        cleanupDeviceTracking()
       }
 
       return segments
@@ -537,7 +561,33 @@ async function main() {
       logger.error(`Heartbeat failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       ui.updateConnectionStatus(false)
       ui.addLog('error', `Heartbeat failed: ${error instanceof Error ? error.message : 'Unknown'}`)
-      return []
+      throw error // Rethrow so retry logic can handle it
+    }
+  }
+
+  // Heartbeat with retry logic
+  const HEARTBEAT_RETRY_DELAYS = [2000, 5000, 10000] // 2s, 5s, 10s
+  let heartbeatRetryCount = 0
+
+  async function sendHeartbeatWithRetry(): Promise<NetworkSegment[]> {
+    try {
+      const segments = await sendHeartbeat()
+      heartbeatRetryCount = 0 // Reset on success
+      return segments
+    } catch (error) {
+      if (heartbeatRetryCount < HEARTBEAT_RETRY_DELAYS.length) {
+        const delay = HEARTBEAT_RETRY_DELAYS[heartbeatRetryCount]
+        heartbeatRetryCount++
+        logger.warn(`Heartbeat retry ${heartbeatRetryCount}/${HEARTBEAT_RETRY_DELAYS.length} in ${delay}ms`)
+        ui.addLog('warn', `Heartbeat retry ${heartbeatRetryCount} in ${delay / 1000}s`)
+
+        await new Promise(resolve => setTimeout(resolve, delay))
+        return sendHeartbeatWithRetry()
+      } else {
+        logger.error(`Heartbeat failed after ${HEARTBEAT_RETRY_DELAYS.length} retries`)
+        heartbeatRetryCount = 0 // Reset for next cycle
+        return []
+      }
     }
   }
 
@@ -760,22 +810,23 @@ async function main() {
     })
 
     // Initial heartbeat
-    await sendHeartbeat()
+    await sendHeartbeatWithRetry()
 
-    // Heartbeat interval - longer when realtime is connected (fallback only)
-    // When realtime is working, heartbeat is just for keepalive and credential refresh
+    // Heartbeat interval - capped at 60 seconds maximum for reliability
+    // Even with realtime connected, we need regular heartbeats to:
+    // 1. Detect realtime failures quickly
+    // 2. Keep connection credentials fresh
+    // 3. Recover from silent disconnections
+    const MAX_HEARTBEAT_INTERVAL = 60000 // 60 seconds maximum
     const getHeartbeatInterval = () => {
-      if (realtimeClient?.connected) {
-        // Use longer interval when realtime is providing updates
-        return Math.max(config.heartbeatInterval, 5 * 60 * 1000) // At least 5 minutes
-      }
-      return config.heartbeatInterval
+      // Always cap at 60 seconds for reliability
+      return Math.min(config.heartbeatInterval, MAX_HEARTBEAT_INTERVAL)
     }
 
     // Dynamic heartbeat - check interval each time
     const scheduleHeartbeat = () => {
       setTimeout(async () => {
-        await sendHeartbeat()
+        await sendHeartbeatWithRetry()
         scheduleHeartbeat() // Reschedule with potentially new interval
       }, getHeartbeatInterval())
     }

@@ -331,6 +331,28 @@
         transform: translate(-50%, -50%) scale(3);
       }
     }
+    /* Socket connection indicator */
+    .socket-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      margin-left: 8px;
+    }
+    .socket-indicator.connected { background: #166534; color: #86efac; }
+    .socket-indicator.disconnected { background: #991b1b; color: #fca5a5; }
+    .socket-indicator.reconnecting { background: #854d0e; color: #fde047; }
+    .socket-indicator-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+    .socket-indicator.connected .socket-indicator-dot { background: #22c55e; }
+    .socket-indicator.disconnected .socket-indicator-dot { background: #ef4444; }
+    .socket-indicator.reconnecting .socket-indicator-dot { background: #fde047; animation: pulse 1s infinite; }
   </style>
 </head>
 <body>
@@ -351,6 +373,10 @@
         <div id="realtime-status" class="realtime-badge disconnected">
           <span class="realtime-dot"></span>
           <span>Realtime Off</span>
+        </div>
+        <div id="socket-status" class="socket-indicator disconnected" title="UI Socket Connection">
+          <span class="socket-indicator-dot"></span>
+          <span>UI</span>
         </div>
       </div>
     </header>
@@ -442,7 +468,20 @@
   </audio>
 
   <script>
-    const socket = io()
+    // Socket.IO with robust reconnection strategy
+    const socket = io({
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      randomizationFactor: 0.5,
+      timeout: 10000,
+    })
+
+    // Connection health tracking
+    let isSocketConnected = false
+    let lastServerMessage = Date.now()
+    const STALE_CONNECTION_THRESHOLD = 60000 // 60 seconds without server message
 
     // UI Elements
     const connectionStatus = document.getElementById('connection-status')
@@ -460,6 +499,7 @@
     const pingDashboardBtn = document.getElementById('ping-dashboard-btn')
     const pingOverlay = document.getElementById('ping-overlay')
     const sonarAudio = document.getElementById('sonar-audio')
+    const socketStatus = document.getElementById('socket-status')
 
     // State
     let state = {
@@ -476,27 +516,64 @@
     // Socket events
     socket.on('connect', () => {
       console.log('Connected to agent')
+      isSocketConnected = true
+      lastServerMessage = Date.now()
+      updateSocketStatus('connected')
+    })
+
+    socket.on('disconnect', (reason) => {
+      console.log('Disconnected from agent:', reason)
+      isSocketConnected = false
+      updateSocketStatus('disconnected')
+    })
+
+    socket.on('connect_error', (error) => {
+      console.error('Socket connection error:', error)
+      isSocketConnected = false
+      updateSocketStatus('disconnected')
+    })
+
+    socket.io.on('reconnect_attempt', (attempt) => {
+      console.log('Reconnection attempt:', attempt)
+      updateSocketStatus('reconnecting')
+    })
+
+    socket.io.on('reconnect', (attempt) => {
+      console.log('Reconnected after', attempt, 'attempts')
+      isSocketConnected = true
+      lastServerMessage = Date.now()
+      updateSocketStatus('connected')
+    })
+
+    socket.io.on('reconnect_failed', () => {
+      console.error('Reconnection failed')
+      updateSocketStatus('disconnected')
     })
 
     socket.on('state', (data) => {
+      lastServerMessage = Date.now()
       state = data
       updateUI()
     })
 
     socket.on('connectionStatus', (isConnected) => {
+      lastServerMessage = Date.now()
       updateConnectionStatus(isConnected)
     })
 
     socket.on('heartbeat', (time) => {
+      lastServerMessage = Date.now()
       lastHeartbeat.textContent = formatTime(new Date(time))
     })
 
     socket.on('segments', (segments) => {
+      lastServerMessage = Date.now()
       state.segments = segments
       renderSegments()
     })
 
     socket.on('scanProgress', ({ segmentId, progress, isScanning }) => {
+      lastServerMessage = Date.now()
       const segment = state.segments.find(s => s.id === segmentId)
       if (segment) {
         segment.progress = progress
@@ -506,27 +583,32 @@
     })
 
     socket.on('devices', (devices) => {
+      lastServerMessage = Date.now()
       state.devices = devices
       renderDevices()
     })
 
     socket.on('deviceStatuses', (statuses) => {
+      lastServerMessage = Date.now()
       state.deviceStatuses = statuses
       renderDevices()
     })
 
     socket.on('log', (entry) => {
+      lastServerMessage = Date.now()
       state.logs.push(entry)
       if (state.logs.length > 100) state.logs = state.logs.slice(-100)
       renderLogs()
     })
 
     socket.on('realtimeStatus', (isConnected) => {
+      lastServerMessage = Date.now()
       state.isRealtimeConnected = isConnected
       updateRealtimeStatus(isConnected)
     })
 
     socket.on('versionInfo', (info) => {
+      lastServerMessage = Date.now()
       state.currentVersion = info.currentVersion
       state.latestVersion = info.latestVersion
       state.upgradeAvailable = info.upgradeAvailable
@@ -535,6 +617,7 @@
 
     // Handle ping received from dashboard
     socket.on('pingReceived', () => {
+      lastServerMessage = Date.now()
       showPingEffect()
     })
 
@@ -599,6 +682,25 @@
       realtimeStatus.className = `realtime-badge ${isConnected ? 'connected' : 'disconnected'}`
       realtimeStatus.querySelector('span:last-child').textContent = isConnected ? 'Realtime' : 'Realtime Off'
     }
+
+    function updateSocketStatus(status) {
+      socketStatus.className = `socket-indicator ${status}`
+      const label = status === 'connected' ? 'UI' : status === 'reconnecting' ? 'Reconnecting' : 'UI Offline'
+      socketStatus.querySelector('span:last-child').textContent = label
+    }
+
+    // Periodic health check for stale connections
+    setInterval(() => {
+      if (isSocketConnected) {
+        const timeSinceLastMessage = Date.now() - lastServerMessage
+        if (timeSinceLastMessage > STALE_CONNECTION_THRESHOLD) {
+          console.warn('Connection appears stale, last message:', Math.round(timeSinceLastMessage / 1000), 'seconds ago')
+          // Force reconnect by disconnecting
+          socket.disconnect()
+          socket.connect()
+        }
+      }
+    }, 30000) // Check every 30 seconds
 
     function renderSegments() {
       if (!state.segments || state.segments.length === 0) {

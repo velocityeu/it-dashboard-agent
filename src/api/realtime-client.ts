@@ -36,6 +36,21 @@ export class RealtimeClient {
   private commandChannel: RealtimeChannel | null = null
   private isConnected = false
 
+  // Subscription tracking - only report connected when channels are actually subscribed
+  private segmentChannelSubscribed = false
+  private commandChannelSubscribed = false
+
+  // Health monitoring
+  private lastMessageReceived = 0
+  private healthCheckTimer: ReturnType<typeof setInterval> | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectAttempts = 0
+  private static readonly MAX_RECONNECT_ATTEMPTS = 10
+  private static readonly INITIAL_RECONNECT_DELAY = 1000 // 1 second
+  private static readonly MAX_RECONNECT_DELAY = 30000 // 30 seconds
+  private static readonly HEALTH_CHECK_INTERVAL = 30000 // 30 seconds
+  private static readonly STALE_THRESHOLD = 120000 // 2 minutes without message
+
   // Callbacks
   private onSegmentChange: SegmentChangeCallback | null = null
   private onCommand: CommandCallback | null = null
@@ -83,7 +98,18 @@ export class RealtimeClient {
   async connect(): Promise<void> {
     this.logger.info('Connecting to Supabase Realtime...')
 
+    // Clear any pending reconnect
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+
     try {
+      // Reset subscription state
+      this.segmentChannelSubscribed = false
+      this.commandChannelSubscribed = false
+      this.lastMessageReceived = Date.now()
+
       // Subscribe to segment changes for this agent
       this.segmentChannel = this.supabase
         .channel(`agent:${this.agentId}:segments`)
@@ -96,6 +122,7 @@ export class RealtimeClient {
             filter: `agent_id=eq.${this.agentId}`,
           },
           (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+            this.lastMessageReceived = Date.now()
             this.handleSegmentChange(payload)
           }
         )
@@ -103,6 +130,15 @@ export class RealtimeClient {
           this.logger.debug(`Segment channel status: ${status}`)
           if (status === 'SUBSCRIBED') {
             this.logger.info('Subscribed to segment changes')
+            this.segmentChannelSubscribed = true
+            this.checkFullyConnected()
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            this.logger.error(`Segment channel error: ${status}`)
+            this.segmentChannelSubscribed = false
+            this.handleConnectionError()
+          } else if (status === 'CLOSED') {
+            this.segmentChannelSubscribed = false
+            this.updateConnectionState()
           }
         })
 
@@ -118,6 +154,7 @@ export class RealtimeClient {
             filter: `agent_id=eq.${this.agentId}`,
           },
           (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+            this.lastMessageReceived = Date.now()
             this.handleCommand(payload)
           }
         )
@@ -125,17 +162,130 @@ export class RealtimeClient {
           this.logger.debug(`Command channel status: ${status}`)
           if (status === 'SUBSCRIBED') {
             this.logger.info('Subscribed to agent commands')
+            this.commandChannelSubscribed = true
+            this.checkFullyConnected()
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            this.logger.error(`Command channel error: ${status}`)
+            this.commandChannelSubscribed = false
+            this.handleConnectionError()
+          } else if (status === 'CLOSED') {
+            this.commandChannelSubscribed = false
+            this.updateConnectionState()
           }
         })
 
+      // Mark as connected (will be refined when subscriptions confirm)
       this.isConnected = true
-      this.onConnectionChange?.('connected')
-      this.logger.info('Supabase Realtime connected')
+
+      // Start health check
+      this.startHealthCheck()
+
     } catch (error) {
       this.logger.error(`Realtime connection failed: ${error}`)
       this.isConnected = false
+      this.segmentChannelSubscribed = false
+      this.commandChannelSubscribed = false
       this.onConnectionChange?.('error')
+      this.scheduleReconnect()
       throw error
+    }
+  }
+
+  /**
+   * Check if both channels are subscribed and update connection state
+   */
+  private checkFullyConnected(): void {
+    if (this.segmentChannelSubscribed && this.commandChannelSubscribed) {
+      this.isConnected = true
+      this.reconnectAttempts = 0 // Reset on successful full connection
+      this.onConnectionChange?.('connected')
+      this.logger.info('Supabase Realtime fully connected')
+    }
+  }
+
+  /**
+   * Update connection state based on subscription status
+   */
+  private updateConnectionState(): void {
+    const wasConnected = this.isConnected
+    this.isConnected = this.segmentChannelSubscribed && this.commandChannelSubscribed
+
+    if (wasConnected && !this.isConnected) {
+      this.onConnectionChange?.('disconnected')
+    }
+  }
+
+  /**
+   * Handle connection errors with retry logic
+   */
+  private handleConnectionError(): void {
+    this.isConnected = false
+    this.onConnectionChange?.('error')
+    this.scheduleReconnect()
+  }
+
+  /**
+   * Schedule a reconnection attempt with exponential backoff
+   */
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) {
+      return // Already scheduled
+    }
+
+    if (this.reconnectAttempts >= RealtimeClient.MAX_RECONNECT_ATTEMPTS) {
+      this.logger.error(`Max reconnection attempts (${RealtimeClient.MAX_RECONNECT_ATTEMPTS}) reached, waiting for next heartbeat`)
+      this.reconnectAttempts = 0
+      return
+    }
+
+    const delay = Math.min(
+      RealtimeClient.INITIAL_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts),
+      RealtimeClient.MAX_RECONNECT_DELAY
+    )
+    this.reconnectAttempts++
+
+    this.logger.info(`Scheduling reconnect attempt ${this.reconnectAttempts} in ${delay}ms`)
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null
+      try {
+        await this.disconnect()
+        await this.connect()
+      } catch (error) {
+        this.logger.error(`Reconnect attempt ${this.reconnectAttempts} failed: ${error}`)
+        // Will schedule another attempt via handleConnectionError
+      }
+    }, delay)
+  }
+
+  /**
+   * Start periodic health check to detect stale connections
+   */
+  private startHealthCheck(): void {
+    this.stopHealthCheck()
+
+    this.healthCheckTimer = setInterval(() => {
+      if (!this.isConnected) return
+
+      const timeSinceLastMessage = Date.now() - this.lastMessageReceived
+
+      // Note: In quiet periods, no messages is normal. But if we haven't received
+      // anything in STALE_THRESHOLD ms and we think we're connected, verify.
+      if (timeSinceLastMessage > RealtimeClient.STALE_THRESHOLD) {
+        this.logger.warn(`Connection may be stale (${Math.round(timeSinceLastMessage / 1000)}s without message)`)
+        // Force reconnect
+        this.handleConnectionError()
+      }
+    }, RealtimeClient.HEALTH_CHECK_INTERVAL)
+  }
+
+  /**
+   * Stop health check timer
+   */
+  private stopHealthCheck(): void {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer)
+      this.healthCheckTimer = null
     }
   }
 
@@ -144,6 +294,13 @@ export class RealtimeClient {
    */
   async disconnect(): Promise<void> {
     this.logger.info('Disconnecting from Supabase Realtime...')
+
+    // Stop health check and pending reconnects
+    this.stopHealthCheck()
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
 
     if (this.segmentChannel) {
       await this.supabase.removeChannel(this.segmentChannel)
@@ -156,15 +313,26 @@ export class RealtimeClient {
     }
 
     this.isConnected = false
+    this.segmentChannelSubscribed = false
+    this.commandChannelSubscribed = false
     this.onConnectionChange?.('disconnected')
     this.logger.info('Supabase Realtime disconnected')
   }
 
   /**
-   * Check if connected to Realtime
+   * Check if connected to Realtime (both channels subscribed)
    */
   get connected(): boolean {
-    return this.isConnected
+    return this.isConnected && this.segmentChannelSubscribed && this.commandChannelSubscribed
+  }
+
+  /**
+   * Check if the connection is healthy (connected and not stale)
+   */
+  isHealthy(): boolean {
+    if (!this.connected) return false
+    const timeSinceLastMessage = Date.now() - this.lastMessageReceived
+    return timeSinceLastMessage < RealtimeClient.STALE_THRESHOLD
   }
 
   /**

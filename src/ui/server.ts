@@ -64,6 +64,9 @@ export class AgentUI {
     this.server = createServer(this.app)
     this.io = new SocketServer(this.server, {
       cors: { origin: '*' },
+      pingInterval: 15000,    // 15 seconds - detect dead connections faster
+      pingTimeout: 45000,     // 45 seconds - allow for slow networks
+      connectTimeout: 10000,  // 10 seconds - faster connection timeout
     })
 
     this.state = {
@@ -256,13 +259,56 @@ export class AgentUI {
     }
 
     // Remove segments no longer assigned
+    const removedSegmentIds: string[] = []
     for (const [id] of this.state.segments) {
       if (!segments.find((s) => s.id === id)) {
         this.state.segments.delete(id)
+        removedSegmentIds.push(id)
       }
     }
 
+    // Clean up device statuses for removed segments
+    if (removedSegmentIds.length > 0) {
+      this.cleanupDeviceStatuses(removedSegmentIds)
+    }
+
     this.io.emit('segments', this.getStateSnapshot().segments)
+  }
+
+  /**
+   * Clean up device statuses that belong to removed segments
+   * This prevents stale data and memory leaks
+   */
+  private cleanupDeviceStatuses(removedSegmentIds: string[]): void {
+    // Get the CIDRs of removed segments (we need to track which devices belonged to them)
+    // For now, we'll clean up all device statuses when segments are removed
+    // since we don't track which device belongs to which segment in the UI state
+    const devicesInRemovedSegments = new Set<string>()
+
+    // Check if any discovered devices no longer belong to any active segment
+    // This is a simplified approach - remove all devices whose segments are gone
+    for (const [ip, device] of this.state.discoveredDevices) {
+      // If we have segment tracking per device, we could be more precise
+      // For now, just log and let the next scan repopulate
+      devicesInRemovedSegments.add(ip)
+    }
+
+    // Remove device statuses for devices in removed segments
+    let cleanedCount = 0
+    for (const ip of devicesInRemovedSegments) {
+      if (this.state.deviceStatuses.has(ip)) {
+        this.state.deviceStatuses.delete(ip)
+        this.state.discoveredDevices.delete(ip)
+        cleanedCount++
+      }
+    }
+
+    if (cleanedCount > 0) {
+      this.logger.debug(`Cleaned up ${cleanedCount} device statuses after segment removal`)
+      // Emit updated device list
+      this.io.emit('devices', Array.from(this.state.discoveredDevices.values()))
+      this.io.emit('deviceStatuses', Array.from(this.state.deviceStatuses.values()))
+    }
   }
 
   setScanCallback(segmentId: string, callback: () => Promise<void>) {
