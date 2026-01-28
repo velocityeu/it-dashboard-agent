@@ -1,7 +1,8 @@
 import os from 'os'
 import { spawn } from 'child_process'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, writeFileSync, mkdirSync } from 'fs'
+import https from 'https'
 import { loadConfig } from './config.js'
 import { createLogger } from './utils/logger.js'
 import { VERSION, shouldAutoUpgrade } from './utils/version.js'
@@ -19,6 +20,73 @@ interface SegmentState {
   segment: NetworkSegment
   lastScan: number
   scanning: boolean
+}
+
+/**
+ * Download the upgrade script from GitHub if it doesn't exist locally
+ * This handles the bootstrap case where an older agent doesn't have the script
+ */
+async function ensureUpgradeScript(installPath: string): Promise<string> {
+  const scriptsDir = join(installPath, 'scripts')
+  const scriptPath = join(scriptsDir, 'upgrade-service.ps1')
+
+  if (existsSync(scriptPath)) {
+    return scriptPath
+  }
+
+  console.log(`Upgrade script not found at ${scriptPath}, downloading from GitHub...`)
+
+  // Create scripts directory if it doesn't exist
+  if (!existsSync(scriptsDir)) {
+    mkdirSync(scriptsDir, { recursive: true })
+  }
+
+  // Download from GitHub raw
+  const scriptUrl = 'https://raw.githubusercontent.com/velocityeu/it-dashboard-agent/master/scripts/upgrade-service.ps1'
+
+  return new Promise((resolve, reject) => {
+    https.get(scriptUrl, (response) => {
+      if (response.statusCode === 302 || response.statusCode === 301) {
+        // Follow redirect
+        const redirectUrl = response.headers.location
+        if (redirectUrl) {
+          https.get(redirectUrl, (redirectResponse) => {
+            let data = ''
+            redirectResponse.on('data', (chunk) => { data += chunk })
+            redirectResponse.on('end', () => {
+              try {
+                writeFileSync(scriptPath, data, 'utf8')
+                console.log(`Upgrade script downloaded to ${scriptPath}`)
+                resolve(scriptPath)
+              } catch (err) {
+                reject(new Error(`Failed to write upgrade script: ${err}`))
+              }
+            })
+          }).on('error', reject)
+        } else {
+          reject(new Error('Redirect without location header'))
+        }
+        return
+      }
+
+      if (response.statusCode !== 200) {
+        reject(new Error(`Failed to download upgrade script: HTTP ${response.statusCode}`))
+        return
+      }
+
+      let data = ''
+      response.on('data', (chunk) => { data += chunk })
+      response.on('end', () => {
+        try {
+          writeFileSync(scriptPath, data, 'utf8')
+          console.log(`Upgrade script downloaded to ${scriptPath}`)
+          resolve(scriptPath)
+        } catch (err) {
+          reject(new Error(`Failed to write upgrade script: ${err}`))
+        }
+      })
+    }).on('error', reject)
+  })
 }
 
 // Track consecutive failures for status hysteresis
@@ -297,11 +365,9 @@ async function main() {
             // This avoids file lock issues since the agent can't replace itself while running
             if (process.platform === 'win32') {
               const installPath = getInstallPath()
-              const scriptPath = join(installPath, 'scripts', 'upgrade-service.ps1')
 
-              if (!existsSync(scriptPath)) {
-                throw new Error(`Upgrade script not found at: ${scriptPath}`)
-              }
+              // Ensure upgrade script exists (download if missing for older installations)
+              const scriptPath = await ensureUpgradeScript(installPath)
 
               logger.info(`[COMMAND:upgrade] Using external PowerShell upgrade script: ${scriptPath}`)
               ui.addLog('info', 'Spawning upgrade process...')
@@ -390,11 +456,9 @@ async function main() {
       // On Windows, use external PowerShell script to handle upgrade
       if (process.platform === 'win32') {
         const installPath = getInstallPath()
-        const scriptPath = join(installPath, 'scripts', 'upgrade-service.ps1')
 
-        if (!existsSync(scriptPath)) {
-          throw new Error(`Upgrade script not found at: ${scriptPath}`)
-        }
+        // Ensure upgrade script exists (download if missing for older installations)
+        const scriptPath = await ensureUpgradeScript(installPath)
 
         logger.info(`[AUTO-UPGRADE] Using external PowerShell upgrade script`)
         ui.addLog('info', 'Spawning auto-upgrade process...')
