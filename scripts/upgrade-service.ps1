@@ -145,6 +145,13 @@ function Stop-AgentService {
 function Start-AgentService {
     Write-Log "Starting $ServiceName service..."
 
+    # Check if service exists
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if (-not $service) {
+        Write-Log "Service not found - running in development mode (no service to start)" "WARN"
+        return $true  # Not a failure in dev mode
+    }
+
     try {
         if (Test-Path $NssmPath) {
             & $NssmPath start $ServiceName 2>$null
