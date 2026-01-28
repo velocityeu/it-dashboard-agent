@@ -1,19 +1,25 @@
 # IT Dashboard Agent
 
-[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
+[![Version](https://img.shields.io/badge/version-3.2.2-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Local network monitoring agent for the IT Dashboard. Discovers devices on your network and reports their status to the cloud dashboard in real-time.
 
-## What's New in v3.2.0
+## What's New in v3.2.2
 
-- **Windows Upgrade Orchestrator**: New PowerShell script (`scripts/upgrade-service.ps1`) handles upgrades externally, solving file lock issues during self-update
-- **Upgrade Status Tracking**: `upgrade-status.json` file provides real-time progress monitoring during upgrades
-- **Development Mode Support**: Installer gracefully handles dev mode (no service) during upgrades
-- **Improved Error Handling**: Better log clarity and error messages throughout
+- **Realtime Reliability Fixes**: Ping works on first attempt, status updates within 15 seconds
+- **Robust Reconnection**: Socket.IO and Supabase realtime auto-reconnect with exponential backoff
+- **Connection Health Monitoring**: UI shows socket connection status, detects stale connections
+- **Heartbeat Improvements**: Capped at 60s max, retry logic with 2s/5s/10s delays on failure
+- **Memory Leak Fix**: Device statuses cleaned up when segments are removed
 
 ### Previous Releases
+
+**v3.2.0:**
+- Windows Upgrade Orchestrator: PowerShell script handles upgrades externally
+- Upgrade Status Tracking: `upgrade-status.json` for real-time progress
+- Development Mode Support: Graceful handling when no service exists
 
 **v3.1.0:**
 - Improved log clarity and error handling messages
