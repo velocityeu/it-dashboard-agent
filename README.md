@@ -221,6 +221,7 @@ Both sides play a sonar sound and the round-trip latency is displayed.
 | `AGENT_NAME` | Display name for this agent | IT Dashboard Agent |
 | `HEARTBEAT_INTERVAL` | Heartbeat frequency (ms) | 60000 |
 | `STATUS_CHECK_INTERVAL` | Status check frequency (ms) | 30000 |
+| `STATUS_FAILURE_THRESHOLD` | Consecutive failures before marking offline | 2 |
 | `LOG_LEVEL` | Logging level (debug/info/warn/error) | info |
 | `LOG_DIR` | Directory for log files | `./logs` |
 | `ENABLE_AUTO_UPGRADE` | Enable automatic upgrades | false |

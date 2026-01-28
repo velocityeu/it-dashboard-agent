@@ -9,6 +9,7 @@ export interface Config {
   agentName: string
   heartbeatInterval: number
   statusCheckInterval: number
+  statusFailureThreshold: number
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   // Supabase Realtime settings (can be provided via env or heartbeat response)
   supabaseUrl?: string
@@ -40,6 +41,7 @@ export function loadConfig(): Config {
     agentName: process.env.AGENT_NAME || 'IT Dashboard Agent',
     heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL || '60', 10) * 1000,
     statusCheckInterval: parseInt(process.env.STATUS_CHECK_INTERVAL || '30', 10) * 1000,
+    statusFailureThreshold: Math.max(0, parseInt(process.env.STATUS_FAILURE_THRESHOLD || '2', 10)),
     logLevel: (process.env.LOG_LEVEL as Config['logLevel']) || 'info',
     // Supabase Realtime settings (optional - can be provided via heartbeat)
     supabaseUrl: process.env.SUPABASE_URL,
