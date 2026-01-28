@@ -21,7 +21,7 @@ The single source of truth for the agent version is:
 **`src/utils/version.ts`**
 
 ```typescript
-export const VERSION = '1.1.0'
+export const VERSION = '3.2.0'
 ```
 
 This file is imported by all components that need version information.
@@ -35,6 +35,7 @@ These files also contain version references and should be updated during release
 | `package.json` | NPM package version (should match) |
 | `scripts/install.ps1` | Banner display version |
 | `scripts/install.sh` | Banner display version |
+| `scripts/upgrade-service.ps1` | PowerShell upgrade script header |
 
 ## Version Synchronization
 
@@ -53,8 +54,9 @@ The dashboard maintains its own version in:
 **`src/lib/constants.ts`**
 
 ```typescript
-export const APP_VERSION = '1.1.0'
-export const LATEST_AGENT_VERSION = '1.1.0'  // Update when releasing new agent
+export const APP_VERSION = '0.5.0'
+export const LATEST_AGENT_VERSION = '3.2.0'  // Update when releasing new agent
+export const ENFORCE_AGENT_UPDATES = true    // Auto-upgrade all outdated agents
 ```
 
 When releasing a new agent version, the dashboard's `LATEST_AGENT_VERSION` constant should be updated to match.

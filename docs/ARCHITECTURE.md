@@ -1,6 +1,6 @@
 # IT Dashboard Agent Architecture
 
-**Version:** 2.0.0
+**Version:** 3.2.0
 
 This document describes the complete architecture of the IT Dashboard Agent, including technology choices, component design, and communication patterns with the cloud dashboard.
 
@@ -176,7 +176,7 @@ Local web interface for monitoring and debugging.
 http://localhost:3001
 +--------------------------------------------------+
 |  IT Dashboard Agent - Office Agent               |
-|  * Connected to dashboard          Version: 2.0.0|
+|  * Connected to dashboard          Version: 3.2.0|
 +--------------------------------------------------+
 |  Segments                                        |
 |  +--------------------------------------------+ |
@@ -202,9 +202,20 @@ http://localhost:3001
 
 ### Upgrade Module (`src/upgrade/upgrader.ts`)
 
-Handles in-place agent upgrades with backup/rollback.
+Handles agent upgrades with backup/rollback. On Windows, upgrades are orchestrated by an external PowerShell script to avoid file lock issues.
 
-**Upgrade Flow:**
+**Upgrade Flow (Windows):**
+1. Agent receives upgrade command
+2. Agent spawns `scripts/upgrade-service.ps1` as external process
+3. Agent exits immediately (releases file handles)
+4. PowerShell script:
+   - Stops NSSM service
+   - Backs up current installation
+   - Downloads and extracts new version
+   - Installs dependencies and builds
+   - Restarts service
+
+**Upgrade Flow (Linux/macOS):**
 1. Download new version ZIP
 2. Backup current installation
 3. Extract new version
@@ -462,8 +473,9 @@ AUTO_UPGRADE_ON_MINOR=true
 | `src/scanner/http.ts` | HTTP/HTTPS endpoint checks |
 | `src/ui/server.ts` | Local Agent UI (Express + Socket.IO) |
 | `src/utils/network-detect.ts` | Auto-detect local network CIDR |
-| `src/upgrade/upgrader.ts` | In-place upgrade with backup/rollback |
+| `src/upgrade/upgrader.ts` | Upgrade coordination with backup/rollback |
 | `src/utils/version.ts` | Centralized version management |
+| `scripts/upgrade-service.ps1` | Windows external upgrade orchestrator |
 
 ---
 

@@ -1,21 +1,32 @@
 # IT Dashboard Agent
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/velocityeu/it-dashboard-agent)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Local network monitoring agent for the IT Dashboard. Discovers devices on your network and reports their status to the cloud dashboard in real-time.
 
-## What's New in v3.0.0
+## What's New in v3.2.0
 
-- **Log Rotation**: Automatic daily log rotation with 7-day retention and gzip compression
-- **Toast Notifications**: Non-blocking notifications replace browser alerts in dashboard
-- **Ping All Online Agents**: Dashboard ping button now pings all online agents in parallel
-- **Individual Ping Buttons**: Each agent card has a dedicated Ping button
-- **Improved Installer**: Pre-packaged NSSM binary, prerequisite checks (Windows version, disk space, port availability)
-- **Offline Installation**: Create air-gapped bundles for installations without internet
-- **Upgrade Retry Logic**: 3 retries with 5-second delays for failed downloads
-- **Pre-built Releases**: GitHub releases include node_modules for faster installation
+- **Windows Upgrade Orchestrator**: New PowerShell script (`scripts/upgrade-service.ps1`) handles upgrades externally, solving file lock issues during self-update
+- **Upgrade Status Tracking**: `upgrade-status.json` file provides real-time progress monitoring during upgrades
+- **Development Mode Support**: Installer gracefully handles dev mode (no service) during upgrades
+- **Improved Error Handling**: Better log clarity and error messages throughout
+
+### Previous Releases
+
+**v3.1.0:**
+- Improved log clarity and error handling messages
+
+**v3.0.0:**
+- Log Rotation: Automatic daily log rotation with 7-day retention and gzip compression
+- Toast Notifications: Non-blocking notifications replace browser alerts in dashboard
+- Ping All Online Agents: Dashboard ping button now pings all online agents in parallel
+- Individual Ping Buttons: Each agent card has a dedicated Ping button
+- Improved Installer: Pre-packaged NSSM binary, prerequisite checks (Windows version, disk space, port availability)
+- Offline Installation: Create air-gapped bundles for installations without internet
+- Upgrade Retry Logic: 3 retries with 5-second delays for failed downloads
+- Pre-built Releases: GitHub releases include node_modules for faster installation
 
 ## Quick Install
 

@@ -1,6 +1,6 @@
 # Realtime Communication
 
-**Version:** 2.0.0
+**Version:** 3.2.0
 
 This document explains how bidirectional realtime communication works between the IT Dashboard Agent and the cloud dashboard, including the rationale for choosing Supabase Realtime over alternatives.
 
@@ -13,7 +13,7 @@ This document explains how bidirectional realtime communication works between th
 - [Connection Establishment](#connection-establishment)
 - [Channel Details](#channel-details)
 - [Command Types](#command-types)
-- [Ping/Pong Feature (v2.0.0)](#pingpong-feature-v200)
+- [Ping/Pong Feature](#pingpong-feature)
 - [Error Handling and Reconnection](#error-handling-and-reconnection)
 - [Supabase Configuration](#supabase-configuration)
 - [Troubleshooting](#troubleshooting)
@@ -146,7 +146,7 @@ Dashboard UI                    Supabase                     Agent
 // Agent sends heartbeat
 POST /api/agent/heartbeat
 {
-  "version": "2.0.0",
+  "version": "3.2.0",
   "hostname": "agent-pc",
   "uptime_seconds": 123
 }
@@ -286,7 +286,7 @@ this.commandChannel = this.supabase
 | `scan_now` | Scan all segments immediately | `{}` |
 | `scan_segment` | Scan specific segment | `{ segment_id: 'uuid' }` |
 | `ping` | Send pong response (v2.0.0) | `{}` |
-| `upgrade` | Upgrade agent to latest version | `{ download_url?: 'url' }` |
+| `upgrade` | Upgrade agent to latest version | `{ download_url?: 'url', target_version?: '3.2.0', auto_queued?: true }` |
 | `restart` | Restart agent process | `{}` |
 | `update_config` | Update runtime configuration | `{ key: value, ... }` |
 
@@ -358,7 +358,7 @@ async acknowledgeCommand(
 
 ---
 
-## Ping/Pong Feature (v2.0.0)
+## Ping/Pong Feature
 
 The ping/pong feature provides instant bidirectional connectivity verification with audio feedback.
 
@@ -612,7 +612,7 @@ Check `http://localhost:3001/api/status`:
 {
   "isConnected": true,
   "isRealtimeConnected": true,
-  "version": "2.0.0",
+  "version": "3.2.0",
   ...
 }
 ```
