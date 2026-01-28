@@ -5,6 +5,16 @@ All notable changes to the IT Dashboard Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.5] - 2026-01-28
+
+### Added
+- **Configurable Failure Threshold**: `STATUS_FAILURE_THRESHOLD` env var to customize hysteresis (default: 2)
+
+### Changed
+- **Segment-Aware Device Tracking**: UI now tracks which segment each device belongs to
+- Device cleanup only removes devices from removed segments (not all devices)
+- More accurate device count per segment in UI
+
 ## [3.2.4] - 2026-01-28
 
 ### Added
