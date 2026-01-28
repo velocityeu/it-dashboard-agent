@@ -5,6 +5,29 @@ All notable changes to the IT Dashboard Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-01-28
+
+### Fixed
+- **Ping not working on first attempt**: Socket.IO connections now have proper ping/timeout configuration
+- **Status not updating in realtime**: Heartbeat interval capped at 60 seconds (was 5+ minutes when realtime connected)
+- **Silent connection timeouts**: Added robust reconnection strategy with exponential backoff
+- **Supabase realtime false positive connections**: Now tracks actual subscription state before reporting connected
+- **Memory leak from stale device data**: Device statuses cleaned up when segments are removed
+
+### Added
+- Socket.IO server configuration: 15s ping interval, 45s timeout, 10s connect timeout
+- Client reconnection with infinite retries and 1-5 second exponential backoff
+- UI socket connection indicator showing connected/disconnected/reconnecting status
+- Heartbeat retry logic with 2s, 5s, 10s delays on failure
+- Supabase realtime health checks detecting stale connections (2 minute threshold)
+- `isHealthy()` method on realtime client for connection quality checks
+- Periodic client-side health check forcing reconnect on stale connections
+
+### Changed
+- Heartbeat interval now capped at 60 seconds maximum for reliability
+- Realtime client only reports connected when both channels are actually subscribed
+- All socket message handlers track last message timestamp for staleness detection
+
 ## [3.2.0] - 2026-01-28
 
 ### Added
